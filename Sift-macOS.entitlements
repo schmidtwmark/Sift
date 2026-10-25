@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The iPhone app's default keychain group, so the Fastmail token syncs
+	     between devices through iCloud Keychain. Sandbox and network
+	     entitlements come from the target's build settings. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.markschmidt.Sift</string>
+	</array>
+</dict>
+</plist>

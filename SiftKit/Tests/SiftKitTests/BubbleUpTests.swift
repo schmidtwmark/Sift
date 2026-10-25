@@ -88,4 +88,15 @@ import Testing
         #expect(calendar.component(.weekday, from: options[3].date) == 2)
         #expect(options.dropFirst().allSatisfy { calendar.component(.hour, from: $0.date) == 8 })
     }
+
+    @Test func neverSuggestsTheSameTimeTwice() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        // Friday: the weekend is tomorrow morning.
+        let friday = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 10)))
+        #expect(BubbleUp.suggestions(from: friday, calendar: calendar).map(\.title) == ["Later Today", "Tomorrow Morning", "Next Week"])
+        // Sunday: next week is tomorrow morning.
+        let sunday = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 25, hour: 10)))
+        #expect(BubbleUp.suggestions(from: sunday, calendar: calendar).map(\.title) == ["Later Today", "Tomorrow Morning"])
+    }
 }

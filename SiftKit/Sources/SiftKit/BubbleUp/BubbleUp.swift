@@ -28,20 +28,25 @@ public struct BubbleUp: Codable, Sendable, Hashable {
             calendar.date(bySettingHour: 8, minute: 0, second: 0, of: day) ?? day
         }
         var options: [(String, Date)] = []
+        // On a Friday the weekend starts tomorrow, and on a Sunday so does the
+        // week; each time is offered once, under its first title.
+        func add(_ title: String, _ date: Date) {
+            if !options.contains(where: { $0.1 == date }) { options.append((title, date)) }
+        }
         let hour = calendar.component(.hour, from: now)
         if hour < 18, let later = calendar.date(byAdding: .hour, value: 3, to: now) {
-            options.append(("Later Today", later))
+            add("Later Today", later)
         }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) {
-            options.append(("Tomorrow Morning", morning(tomorrow)))
+            add("Tomorrow Morning", morning(tomorrow))
         }
         let weekday = calendar.component(.weekday, from: now)  // 1 = Sunday, 7 = Saturday
         if weekday != 7, weekday != 1,
            let saturday = calendar.nextDate(after: now, matching: DateComponents(weekday: 7), matchingPolicy: .nextTime) {
-            options.append(("This Weekend", morning(saturday)))
+            add("This Weekend", morning(saturday))
         }
         if let monday = calendar.nextDate(after: now, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime) {
-            options.append(("Next Week", morning(monday)))
+            add("Next Week", morning(monday))
         }
         return options
     }

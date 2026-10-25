@@ -1,12 +1,42 @@
 # Sift
 
-A calm, Hey-style iOS and macOS client for Fastmail.
+A calm, Hey-style iOS and macOS client for Fastmail. There's also an [Android version](android/README.md).
 
 - **Screener.** Mail from new senders waits in the Screener. When you screen a sender in, you pick one or more labels for their mail; when you screen them out, their mail goes to Screened Out.
 - **Everything.** One view of all mail, including Spam and Trash.
 - **Spy-pixel blocking.** Tracking pixels are removed, and each message names the service that tried to track you.
 - **Search.** Instant results from the local index, plus complete results from Fastmail's server-side search.
 - **Per-sender alerts and badge.** Both are off for everyone by default; you turn them on for individual senders.
+
+## Screenshots
+
+These show the sample mail from demo mode.
+
+### iPhone
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-home.png" width="250" alt="Screener, Inbox and labels, each label with its own icon"><br>Mailboxes, with an icon for each label</td>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-screener.png" width="250" alt="The Screener, listing new senders with Screen Out and Screen In buttons"><br>The Screener</td>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-screen-in.png" width="250" alt="A Screener email open, with the label picker showing Travel ticked"><br>Screening a sender in to Travel</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-spy-pixel.png" width="250" alt="A newsletter with a popover saying a Mailchimp spy pixel was blocked"><br>A blocked spy pixel</td>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-compose.png" width="250" alt="A new message, suggesting addresses as you type"><br>Compose, with address suggestions</td>
+    <td align="center" valign="top"><img src="docs/screenshots/iphone-bubble-up.png" width="250" alt="A conversation with the Bubble Up menu open"><br>Bubble Up</td>
+  </tr>
+</table>
+
+### Android
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/android-screener.png" width="190" alt="The Screener on Android"><br>The Screener</td>
+    <td align="center" valign="top"><img src="docs/screenshots/android-screened-in.png" width="190" alt="An email from Fjord Air after screening it in to Travel"><br>Screened in to Travel</td>
+    <td align="center" valign="top"><img src="docs/screenshots/android-spy-pixel.png" width="190" alt="A dialog saying a Mailchimp spy pixel was blocked"><br>A blocked spy pixel</td>
+    <td align="center" valign="top"><img src="docs/screenshots/android-inbox.png" width="190" alt="The Inbox on Android"><br>Inbox</td>
+  </tr>
+</table>
 
 ## Getting started
 
@@ -142,6 +172,6 @@ cd SiftKit && swift test --scratch-path ~/Library/Caches/Sift/SiftKit-build
 ## Not yet verified or built
 
 - **Real account:** sign-in, the scope check and mailbox creation work against Fastmail. Saving the first screening rule hasn't been tried yet. It depends on Fastmail accepting email-address (`mailto:`) group members, and if it doesn't, Sift says so and leaves your mail and rules unchanged.
-- **Compose:** plain text only, and you can't attach files.
+- **Compose:** plain text only, with no formatting.
 - **Offline:** changes made offline aren't queued for later.
 - **OAuth:** no OAuth sign-in yet; you paste an API token.

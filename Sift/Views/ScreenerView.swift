@@ -162,11 +162,14 @@ struct ScreenInButton: View {
 }
 
 /// A sender waiting in the Screener, read like any other email, with the
-/// decision at the bottom. Deciding files their mail and keeps you here, so
-/// you see where it went.
+/// decision at the bottom. Screening in turns it into an ordinary
+/// conversation, so you can reply or file it straight away; screening out
+/// keeps you here, so you see where it went.
 struct ScreenerSenderView: View {
     @Environment(AppModel.self) private var model
     let email: String
+    /// Leaves the conversation after it's archived, trashed or marked spam.
+    var onClose: () -> Void = {}
 
     /// The Screener, to find this sender when the view opens. Object-owned
     /// observations, because a `.task` can be cancelled mid-navigation on iPhone.
@@ -184,6 +187,15 @@ struct ScreenerSenderView: View {
     }
 
     var body: some View {
+        if case .screenedIn(let labels)? = decision, let threadId = shown.first?.threadId {
+            ThreadView(threadId: threadId, sourceMailbox: archiveSource(labels), onClose: onClose)
+                .id(threadId)
+        } else {
+            screening
+        }
+    }
+
+    private var screening: some View {
         Group {
             if let opened {
                 ScrollView {
@@ -300,8 +312,16 @@ struct ScreenerSenderView: View {
         case .screenedIn(let labels): await model.screenIn(entry, labels: labels)
         case .screenedOut: await model.screenOut(entry)
         }
-        // Stay on the email; the folder chips above update as it moves.
-        if model.errorMessage == nil { withAnimation(.snappy) { decision = choice } }
+        guard model.errorMessage == nil else { return }
+        withAnimation(.snappy) { decision = choice }
+        if case .screenedIn = choice { model.show(AppModel.Toast(message: outcome(choice))) }
+    }
+
+    /// What Archive takes the conversation out of: the Inbox, or else the
+    /// first folder they were screened in to.
+    private func archiveSource(_ labels: Set<String>) -> String? {
+        guard let inbox = model.special?.inbox, !labels.contains(inbox) else { return nil }
+        return model.labels.map(\.id).first(where: labels.contains)
     }
 
     private func outcome(_ decision: Decision) -> String {

@@ -185,7 +185,7 @@ struct MainView: View {
         } else if selectedThreads.count > 1 {
             MultiSelectionView(threadIds: selectedThreads, mailboxId: sourceMailbox)
         } else if let selectedSender, sidebar == .screener, searchText.isEmpty {
-            ScreenerSenderView(email: selectedSender)
+            ScreenerSenderView(email: selectedSender, onClose: { self.selectedSender = nil })
                 .id(selectedSender)
         } else if let selectedSender, sidebar == .senders {
             SenderSettingsView(email: selectedSender)

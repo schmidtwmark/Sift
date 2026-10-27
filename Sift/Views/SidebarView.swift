@@ -12,8 +12,6 @@ struct SidebarView: View {
     @Binding var showSettings: Bool
     @State private var screenerCount = 0
     @State private var searchText = ""
-    @AppStorage("sidebar.labelsExpanded") private var labelsExpanded = true
-    @AppStorage("sidebar.moreExpanded") private var moreExpanded = true
 
     /// On iPhone the sidebar is the home screen, so search lives here: results
     /// replace the list and push threads. iPad and Mac search from the toolbar.
@@ -61,7 +59,7 @@ struct SidebarView: View {
             }
 
             // Drag to reorder (on iPhone, after tapping Edit); the order is saved in Fastmail.
-            Section("Labels", isExpanded: $labelsExpanded) {
+            Section("Labels") {
                 ForEach(folders) { label in
                     Label(label.name, systemImage: model.icon(for: label.id))
                         .badge(label.unreadEmails)
@@ -77,7 +75,7 @@ struct SidebarView: View {
             }
 
             // System piles: no unread counts, by design.
-            Section("More", isExpanded: $moreExpanded) {
+            Section("More") {
                 Label("Everything", systemImage: "square.stack.3d.up").tag(SidebarItem.everything)
                 ForEach(systemMailboxes, id: \.id) { item in
                     Label(item.name, systemImage: item.icon)

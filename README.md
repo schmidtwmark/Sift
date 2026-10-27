@@ -82,6 +82,10 @@ Everything Sift does is stored in Fastmail, so the Fastmail web app stays usable
   - **Screened-in sender:** filed into that sender's labels (Inbox if none).
   - **Screened-out sender:** moved to Screened Out and marked read.
   - **Anyone else:** moved to the Screener.
+- **Spam:** Fastmail's spam filter runs before Sift sees new mail.
+  - When mail from a screened-in sender lands in Spam, Sift moves it to their labels and marks it `$notjunk`. The exception is mail that fails Fastmail's DMARC check, since it may not really be from them.
+  - Open anything in Spam and tap **Not Spam** to screen the sender in and take all their mail out of Spam. Screening a sender in anywhere else does the same.
+  - Mail you move to Spam yourself stays there.
 - Sorting happens on whichever device is running Sift. On a Mac with **Open Sift at login** on, it happens within seconds. Until a device runs, new mail sits in the Fastmail Inbox.
 - Because decisions are contact groups, you can also add a Fastmail rule that sorts mail on the server. Fastmail rules can match "sender is (not) in contact group".
 

@@ -128,7 +128,8 @@ public final class DemoServer: @unchecked Sendable {
     @discardableResult
     public func deliver(from: (name: String, email: String), subject: String, text: String, html: String? = nil,
                         mailbox: String = "inbox", receivedAt: Date = .now, keywords: [String] = [],
-                        threadId: String? = nil, to: String = "you@fastmail.com") -> String {
+                        threadId: String? = nil, to: String = "you@fastmail.com",
+                        authenticationResults: [String]? = nil) -> String {
         locked {
             let id = "M\(nextId)"
             nextId += 1
@@ -147,6 +148,7 @@ public final class DemoServer: @unchecked Sendable {
                 "hasAttachment": false,
                 "messageId": ["<\(id)@demo.sift>"], "inReplyTo": NSNull(), "references": NSNull(),
             ]
+            if let authenticationResults { emails[id]?["header:Authentication-Results:asText:all"] = authenticationResults }
             bodies[id] = (html ?? "<p>\(HTMLText.escape(text))</p>", text)
             record(created: [id])
             return id

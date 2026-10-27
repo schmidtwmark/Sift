@@ -382,20 +382,30 @@ public actor SyncEngine {
     /// devices thanks to the `$siftrouted` keyword.
     func route() async throws {
         guard let boxes = mailboxes else { return }
-        let candidates = try await store.messages(in: boxes.inbox).filter { !$0.isRouted && $0.receivedAt >= activatedAt }
+        let ruleList = try await store.senders()
+        let rulesByEmail = Dictionary(ruleList.map { ($0.email, $0) }, uniquingKeysWith: { first, _ in first })
+        let inbox = try await store.messages(in: boxes.inbox).filter { !$0.isRouted && $0.receivedAt >= activatedAt }
+        // Spam from screened-in senders, which Fastmail filtered before Sift could sort it.
+        var spam: [MessageRecord] = []
+        if let junk = boxes.junk {
+            spam = try await store.messages(in: junk).filter {
+                !$0.isRouted && $0.receivedAt >= activatedAt && rulesByEmail[$0.fromEmail]?.status == .screenedIn
+            }
+        }
+        let candidates = inbox + spam
         guard !candidates.isEmpty else { return }
 
         var known = await rules.contactAddresses
-        for candidate in candidates {
+        for candidate in inbox {
             if try await store.hasWrittenTo(candidate.fromEmail) { known.insert(candidate.fromEmail) }
         }
-        let ruleList = try await store.senders()
         let context = RoutingContext(
             mailboxes: boxes,
             activatedAt: activatedAt,
             ownAddresses: Set(identities.map { $0.email.lowercased() }),
             knownAddresses: known,
-            rules: Dictionary(ruleList.map { ($0.email, $0) }, uniquingKeysWith: { first, _ in first })
+            rules: rulesByEmail,
+            unauthenticated: try await failingDMARC(spam.map(\.id))
         )
         let plan = Router.plan(for: candidates, context: context)
         for address in plan.autoApproved {
@@ -403,6 +413,29 @@ public actor SyncEngine {
             try? await saveRule(rule)
         }
         try await apply(plan.patches)
+    }
+
+    /// The messages whose From address failed DMARC when Fastmail received them.
+    private func failingDMARC(_ ids: [String]) async throws -> Set<String> {
+        guard !ids.isEmpty else { return [] }
+        struct Headers: Decodable {
+            var id: String
+            var results: [String]?
+            enum CodingKeys: String, CodingKey {
+                case id
+                case results = "header:Authentication-Results:asText:all"
+            }
+        }
+        let accountId = try await client.accountId()
+        let response = try await client.perform([
+            MethodCall("Email/get", [
+                "accountId": .string(accountId),
+                "ids": .strings(ids),
+                "properties": .strings(["id", "header:Authentication-Results:asText:all"]),
+            ], id: "auth"),
+        ])
+        let list = try response.result("auth", as: GetResponse<Headers>.self).list
+        return Set(list.filter { Router.failedDMARC($0.results ?? []) }.map(\.id))
     }
 
     // MARK: - Screener actions
@@ -416,7 +449,16 @@ public actor SyncEngine {
         rule.updatedAt = .now
         try await saveRule(rule)
         let waiting = try await store.messages(from: sender, in: boxes.screener)
-        try await apply(Router.screenIn(waiting, labels: labels, mailboxes: boxes))
+        var patches = Router.screenIn(waiting, labels: labels, mailboxes: boxes)
+        patches.merge(try await releaseSpam(from: sender, toLabels: labels), uniquingKeysWith: { $1 })
+        try await apply(patches)
+    }
+
+    /// Everything of the sender's in Spam, out to `labels` (the Inbox when empty).
+    private func releaseSpam(from sender: String, toLabels labels: [String]) async throws -> [String: EmailPatch] {
+        guard let boxes = mailboxes, let junk = boxes.junk else { return [:] }
+        let spam = try await store.messages(from: sender, in: junk)
+        return Dictionary(uniqueKeysWithValues: spam.map { ($0.id, Router.release($0, toLabels: labels, mailboxes: boxes)) })
     }
 
     public func screenOut(_ sender: String, name: String?) async throws {
@@ -455,6 +497,7 @@ public actor SyncEngine {
                     to: destinations
                 )
             }
+            patches.merge(try await releaseSpam(from: rule.email, toLabels: rule.labelIds), uniquingKeysWith: { $1 })
             try await apply(patches)
         case .unknown:
             break
@@ -513,14 +556,17 @@ public actor SyncEngine {
     @discardableResult
     public func moveToJunk(_ ids: [String]) async throws -> Placement {
         guard let junk = mailboxes?.junk else { return [:] }
-        return try await replaceMailboxes(ids, with: junk)
+        // Marked as sorted too, so Sift never pulls it back out for a screened-in sender.
+        return try await replaceMailboxes(ids, with: junk, keywords: [
+            "keywords/\(Keyword.junk)": true, "keywords/\(Keyword.notJunk)": .null, "keywords/\(Keyword.routed)": true,
+        ])
     }
 
-    private func replaceMailboxes(_ ids: [String], with mailboxId: String) async throws -> Placement {
+    private func replaceMailboxes(_ ids: [String], with mailboxId: String, keywords: EmailPatch = [:]) async throws -> Placement {
         let messages = try await store.messages(ids: ids)
         var patches: [String: EmailPatch] = [:]
         for message in messages {
-            patches[message.id] = Router.move(from: message.mailboxIds, to: [mailboxId])
+            patches[message.id] = Router.move(from: message.mailboxIds, to: [mailboxId]).merging(keywords, uniquingKeysWith: { $1 })
         }
         try await apply(patches)
         return Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0.mailboxIds) })
@@ -533,6 +579,9 @@ public actor SyncEngine {
         for message in messages {
             guard let original = placement[message.id] else { continue }
             patches[message.id] = Router.move(from: message.mailboxIds, to: original)
+            if let junk = mailboxes?.junk, message.mailboxIds.contains(junk), !original.contains(junk) {
+                patches[message.id]?["keywords/\(Keyword.junk)"] = .null
+            }
         }
         try await apply(patches)
     }

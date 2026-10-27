@@ -80,6 +80,10 @@ public enum DemoSeed {
                        <img src="https://t.sidekickopen87.com/Ctc/5D+113/c3Lh-04/open" width="1" height="1" style="display:block">
                        """,
                        receivedAt: ago(1, hours: 20))
+        // Fastmail's filter caught this one; Sift's "Not Spam" brings it back.
+        server.deliver(from: ("Basecamp Climbing", "news@basecampclimbing.example"), subject: "New routes in the cave",
+                       text: "Twelve new problems went up this week, from V0 to V7. Members' night is Thursday.",
+                       mailbox: "junk", receivedAt: ago(1, hours: 10))
         server.deliver(from: ("Fjord Air", "bookings@fjordair.example"), subject: "Your trip to Bergen: booking FJ7Q2K",
                        text: "Booking FJ7Q2K is confirmed. Departs Thursday 07:40, seat 14A. Check in opens 24 hours before departure.",
                        html: tripHTML, receivedAt: ago(1, hours: 6))

@@ -284,6 +284,27 @@ final class AppModel {
         await perform { try await engine.screenIn(entry.email, name: entry.name, labels: ordered) }
     }
 
+    /// Screens the sender in and takes all their mail out of Spam: into
+    /// `folders`, or else wherever they're already screened in to (the Inbox
+    /// if nowhere). Their later mail comes out of Spam on its own.
+    func notSpam(_ message: MessageRecord, folders: Set<String>? = nil) async {
+        guard let engine else { return }
+        let sender = message.fromEmail
+        let labels: [String]
+        if let folders {
+            labels = self.labels.map(\.id).filter(folders.contains)
+        } else if let rule = try? await store?.read(.sender(sender)), rule.status == .screenedIn {
+            labels = rule.labelIds
+        } else {
+            labels = []
+        }
+        await perform { try await engine.screenIn(sender, name: message.fromName, labels: labels) }
+        guard errorMessage == nil else { return }
+        let names = self.labels.filter { labels.contains($0.id) }.map(\.name)
+        show(Toast(message: "Moved to \(names.isEmpty ? "Inbox" : names.formatted(.list(type: .and))). "
+                   + "Sift will take \(message.fromName ?? sender)'s mail out of Spam from now on."))
+    }
+
     func screenOut(_ entry: ScreenerEntry) async {
         guard let engine else { return }
         await perform { try await engine.screenOut(entry.email, name: entry.name) }

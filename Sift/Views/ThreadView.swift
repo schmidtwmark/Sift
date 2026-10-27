@@ -27,6 +27,9 @@ struct ThreadView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                if let spam {
+                    SpamBanner(message: spam)
+                }
                 if let latest = messages.last, latest.isDraft {
                     Button {
                         Task { await editDraft(latest) }
@@ -107,6 +110,12 @@ struct ThreadView: View {
 
     /// The conversation, without Bubble Up notes (they only move it to the top).
     private var messages: [MessageRecord] { (live.value ?? []).filter { !$0.isBubble } }
+
+    /// The newest message in Spam, if any.
+    private var spam: MessageRecord? {
+        guard let junk = model.special?.junk else { return nil }
+        return messages.last { $0.mailboxIds.contains(junk) }
+    }
 
     /// When the conversation last bubbled up, if that's its newest activity.
     private var bubbledAt: Date? {
@@ -318,6 +327,67 @@ private struct PublishesSelection: ViewModifier {
 struct IdentifiedString: Identifiable {
     var value: String
     var id: String { value }
+}
+
+/// Shown above a conversation in Spam. "Not Spam" screens the sender in and
+/// takes their mail out, to where they're screened in to or to folders you pick.
+private struct SpamBanner: View {
+    @Environment(AppModel.self) private var model
+    let message: MessageRecord
+    @State private var isWorking = false
+
+    var body: some View {
+        // Side by side when there's room (the Mac), otherwise stacked.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                explanation
+                Spacer(minLength: 8)
+                button
+            }
+            VStack(alignment: .trailing, spacing: 10) {
+                explanation.frame(maxWidth: .infinity, alignment: .leading)
+                button
+            }
+        }
+        .padding(14)
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 20)
+    }
+
+    private var explanation: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Fastmail put this in Spam")
+                    .font(.subheadline.weight(.semibold))
+                Text("If it isn't, Sift screens the sender in and keeps their mail out of Spam.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: "xmark.bin")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var button: some View {
+        HStack(spacing: 8) {
+            if isWorking { ProgressView().controlSize(.small) }
+            ScreenInButton(
+                title: "Not Spam",
+                applyTitle: { count in count == 1 ? "Move to 1 Folder" : "Move to \(count) Folders" },
+                onPrimary: { await decide(nil) },
+                onScreenIn: { folders in await decide(folders) }
+            )
+            .disabled(isWorking)
+        }
+    }
+
+    private func decide(_ folders: Set<String>?) async {
+        isWorking = true
+        defer { isWorking = false }
+        await model.notSpam(message, folders: folders)
+    }
 }
 
 /// Which labels the conversation is in.

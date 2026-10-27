@@ -99,6 +99,9 @@ public enum Keyword {
     public static let flagged = "$flagged"
     public static let draft = "$draft"
     public static let answered = "$answered"
+    /// Spam training hints (RFC 8621): set when you move mail into or out of Spam.
+    public static let junk = "$junk"
+    public static let notJunk = "$notjunk"
     /// Marks mail Sift has already sorted, so every device (and a future
     /// server) routes each message exactly once.
     public static let routed = "$siftrouted"

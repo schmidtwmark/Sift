@@ -107,17 +107,24 @@ struct ScreenerCard: View {
 /// chevron opens the folder menu, applied by its last item.
 struct ScreenInButton: View {
     @Environment(AppModel.self) private var model
+    var title = "Screen In"
+    var applyTitle: (Int) -> String = { count in count == 1 ? "Screen In to 1 Folder" : "Screen In to \(count) Folders" }
+    /// The main half; screens in to the Inbox unless given.
+    var onPrimary: (() async -> Void)?
     let onScreenIn: (Set<String>) async -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             Button {
-                guard let inbox = model.special?.inbox else { return }
-                Task { await onScreenIn([inbox]) }
+                if let onPrimary {
+                    Task { await onPrimary() }
+                } else if let inbox = model.special?.inbox {
+                    Task { await onScreenIn([inbox]) }
+                }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark")
-                    Text("Screen In")
+                    Text(title)
                 }
                 .lineLimit(1)
                 .padding(.leading, 14)
@@ -132,7 +139,7 @@ struct ScreenInButton: View {
                 .frame(width: 1, height: 18)
 
             FolderMenu(
-                applyTitle: { count in count == 1 ? "Screen In to 1 Folder" : "Screen In to \(count) Folders" },
+                applyTitle: applyTitle,
                 applyIcon: "tray.and.arrow.down",
                 onApply: { folders in Task { await onScreenIn(folders) } }
             ) {
@@ -145,7 +152,7 @@ struct ScreenInButton: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Choose folders")
-            .help("Screen in to folders…")
+            .help("Choose folders…")
         }
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(.white)

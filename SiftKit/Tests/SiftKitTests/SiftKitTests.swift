@@ -169,6 +169,54 @@ let boxes = SpecialMailboxes(inbox: "inbox", screener: "screener", screenedOut: 
         #expect(mine.patches["me"] == ["keywords/$siftrouted": true])
     }
 
+    @Test func spamFromScreenedInSendersComesBackOut() {
+        let rule = SenderRecord(email: "news@acme.com", status: .screenedIn, labelIds: ["feed"])
+        let spam = MessageRecord(email("1", from: "news@acme.com", mailboxes: ["junk"], keywords: ["$junk"]))
+        #expect(Router.plan(for: [spam], context: context(rules: [rule])).patches["1"] == [
+            "mailboxIds/junk": .null, "mailboxIds/feed": true,
+            "keywords/$notjunk": true, "keywords/$junk": .null, "keywords/$siftrouted": true,
+        ])
+        // Screened in to the Inbox.
+        let pal = SenderRecord(email: "pal@acme.com", status: .screenedIn)
+        let fromPal = MessageRecord(email("2", from: "pal@acme.com", mailboxes: ["junk"]))
+        #expect(Router.plan(for: [fromPal], context: context(rules: [pal])).patches["2"]?["mailboxIds/inbox"] == true)
+    }
+
+    @Test func otherSpamStaysPut() {
+        let out = SenderRecord(email: "out@acme.com", status: .screenedOut)
+        let pal = SenderRecord(email: "pal@acme.com", status: .screenedIn)
+        let messages = [
+            email("unknown", from: "who@x.com", mailboxes: ["junk"]),
+            email("contact", from: "friend@x.com", mailboxes: ["junk"]),
+            email("out", from: "out@acme.com", mailboxes: ["junk"]),
+            email("old", from: "pal@acme.com", mailboxes: ["junk"], received: activated.addingTimeInterval(-1)),
+            email("moved", from: "pal@acme.com", mailboxes: ["junk"], keywords: ["$siftrouted"]),
+        ].map(MessageRecord.init)
+        let plan = Router.plan(for: messages, context: context(rules: [out, pal], known: ["friend@x.com"]))
+        #expect(plan.patches.isEmpty)
+        #expect(plan.autoApproved.isEmpty)
+    }
+
+    @Test func spoofedSpamStaysInSpam() {
+        let pal = SenderRecord(email: "pal@acme.com", status: .screenedIn)
+        let spam = MessageRecord(email("1", from: "pal@acme.com", mailboxes: ["junk"]))
+        var context = context(rules: [pal])
+        context.unauthenticated = ["1"]
+        // Sorted once, so it isn't checked again, but left in Spam.
+        #expect(Router.plan(for: [spam], context: context).patches["1"] == ["keywords/$siftrouted": true])
+    }
+
+    @Test func readsFastmailsDMARCVerdict() {
+        let pass = "mx4.messagingengine.com; dkim=pass header.d=acme.com; dmarc=pass (p=reject) header.from=acme.com; spf=pass"
+        let fail = "mx4.messagingengine.com; dkim=none; dmarc=fail (p=none,has-list-id=no) header.from=acme.com; spf=softfail"
+        #expect(!Router.failedDMARC([]))
+        #expect(!Router.failedDMARC([pass]))
+        #expect(Router.failedDMARC([fail]))
+        // Only the topmost (Fastmail's own) verdict counts, not one the sender wrote.
+        #expect(!Router.failedDMARC([pass, fail]))
+        #expect(!Router.failedDMARC(["mx4.messagingengine.com; dmarc=none header.from=acme.com"]))
+    }
+
     @Test func screenInReleasesIntoInboxWhenNoLabels() {
         let waiting = MessageRecord(email("1", from: "a@x.com", mailboxes: ["screener"]))
         #expect(Router.screenIn([waiting], labels: [], mailboxes: boxes)["1"] == [
@@ -430,6 +478,56 @@ let boxes = SpecialMailboxes(inbox: "inbox", screener: "screener", screenedOut: 
         let rule = try #require(try await other.store.sender("bookings@fjordair.example"))
         #expect(rule.status == .screenedIn)
         #expect(rule.labelIds == ["travel"])
+    }
+
+    @Test func rescuesScreenedInMailFromSpam() async throws {
+        let server = DemoServer()
+        let engine = try makeEngine(server)
+        try await engine.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+        try await engine.screenIn("bookings@fjordair.example", name: "Fjord Air", labels: ["travel"])
+
+        // Fastmail's filter puts their next email in Spam; Sift takes it back out.
+        let caught = server.deliver(from: ("Fjord Air", "bookings@fjordair.example"), subject: "Gate change", text: "Gate 4",
+                                    mailbox: "junk", keywords: ["$junk"])
+        // One that only claims to be from them stays.
+        let forged = server.deliver(from: ("Fjord Air", "bookings@fjordair.example"), subject: "Verify your card", text: "Click",
+                                    mailbox: "junk", authenticationResults: ["mx1.messagingengine.com; dmarc=fail header.from=fjordair.example"])
+        let stranger = server.deliver(from: ("Prize Desk", "win@prize.example"), subject: "You won", text: "!", mailbox: "junk")
+        try await engine.refresh()
+
+        #expect(server.emailMailboxes(caught) == ["travel"])
+        #expect(server.emailKeywords(caught).isSuperset(of: [Keyword.notJunk, Keyword.routed]))
+        #expect(!server.emailKeywords(caught).contains(Keyword.junk))
+        #expect(server.emailMailboxes(forged) == ["junk"])
+        #expect(server.emailMailboxes(stranger) == ["junk"])
+
+        // Moving it back to Spam yourself sticks.
+        try await engine.moveToJunk([caught])
+        try await engine.refresh()
+        #expect(server.emailMailboxes(caught) == ["junk"])
+        #expect(server.emailKeywords(caught).contains(Keyword.junk))
+    }
+
+    @Test func screeningInReleasesTheirSpam() async throws {
+        let server = DemoServer()
+        let engine = try makeEngine(server)
+        try await engine.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+        let caught = server.deliver(from: ("Riddle", "hello@riddle.example"), subject: "Episode 398", text: "New", mailbox: "junk")
+        try await engine.refresh()
+        #expect(server.emailMailboxes(caught) == ["junk"])
+
+        try await engine.screenIn("hello@riddle.example", name: "Riddle", labels: [])
+        #expect(server.emailMailboxes(caught) == ["inbox"])
+        #expect(server.emailKeywords(caught).contains(Keyword.notJunk))
+
+        // Changing their folders in sender settings refiles from Spam too.
+        let again = server.deliver(from: ("Riddle", "hello@riddle.example"), subject: "Episode 399", text: "New", mailbox: "junk")
+        try await engine.refresh()
+        #expect(server.emailMailboxes(again) == ["inbox"])
+        try await engine.moveToJunk([again])
+        try await engine.updateRule(SenderRecord(email: "hello@riddle.example", status: .screenedIn, labelIds: ["newsletters"]), refile: true)
+        #expect(server.emailMailboxes(again) == ["newsletters"])
+        #expect(server.emailMailboxes(caught) == ["newsletters"])
     }
 
     @Test func honoursContactsAddedToGroupsInFastmail() async throws {

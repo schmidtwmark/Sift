@@ -39,14 +39,18 @@ public struct RoutingContext: Sendable {
     /// People in the user's contacts or whom they've written to.
     public var knownAddresses: Set<String>
     public var rules: [String: SenderRecord]
+    /// Spam whose sender address failed Fastmail's DMARC check: it may not be
+    /// from them, so it stays in Spam even if they're screened in.
+    public var unauthenticated: Set<String>
 
     public init(mailboxes: SpecialMailboxes, activatedAt: Date, ownAddresses: Set<String>,
-                knownAddresses: Set<String>, rules: [String: SenderRecord]) {
+                knownAddresses: Set<String>, rules: [String: SenderRecord], unauthenticated: Set<String> = []) {
         self.mailboxes = mailboxes
         self.activatedAt = activatedAt
         self.ownAddresses = ownAddresses
         self.knownAddresses = knownAddresses
         self.rules = rules
+        self.unauthenticated = unauthenticated
     }
 }
 
@@ -66,10 +70,22 @@ public enum Router {
         let boxes = context.mailboxes
 
         for message in messages {
-            guard message.mailboxIds.contains(boxes.inbox),
-                  !message.isRouted,
+            guard !message.isRouted,
                   !message.isDraft,
                   message.receivedAt >= context.activatedAt else { continue }
+
+            // Fastmail's spam filter runs before Sift sees anything. Mail from a
+            // sender you screened in comes back out; the rest of Spam is left alone.
+            if let junk = boxes.junk, message.mailboxIds.contains(junk) {
+                guard let rule = context.rules[message.fromEmail], rule.status == .screenedIn else { continue }
+                if context.unauthenticated.contains(message.id) {
+                    plan.patches[message.id] = ["keywords/\(Keyword.routed)": true]
+                } else {
+                    plan.patches[message.id] = release(message, toLabels: rule.labelIds, mailboxes: boxes)
+                }
+                continue
+            }
+            guard message.mailboxIds.contains(boxes.inbox) else { continue }
 
             let sender = message.fromEmail
             var patch: EmailPatch = ["keywords/\(Keyword.routed)": true]
@@ -104,6 +120,24 @@ public enum Router {
             patches[message.id] = file(intoLabels: labels, inbox: mailboxes.inbox, from: mailboxes.screener)
         }
         return patches
+    }
+
+    /// Takes a message out of Spam into `labels` (the Inbox when empty), and
+    /// tells Fastmail's filter it wasn't spam.
+    public static func release(_ message: MessageRecord, toLabels labels: [String], mailboxes: SpecialMailboxes) -> EmailPatch {
+        let destinations = labels.isEmpty ? [mailboxes.inbox] : labels
+        var patch = move(from: [mailboxes.junk].compactMap { $0 }, to: destinations)
+        patch["keywords/\(Keyword.notJunk)"] = true
+        patch["keywords/\(Keyword.junk)"] = .null
+        patch["keywords/\(Keyword.routed)"] = true
+        return patch
+    }
+
+    /// Whether the receiving server's verdict (the topmost Authentication-Results,
+    /// which Fastmail adds on arrival) says the From address failed DMARC.
+    public static func failedDMARC(_ authenticationResults: [String]) -> Bool {
+        guard let fastmail = authenticationResults.first else { return false }
+        return fastmail.lowercased().range(of: #"\bdmarc=fail\b"#, options: .regularExpression) != nil
     }
 
     public static func screenOut(_ messages: [MessageRecord], mailboxes: SpecialMailboxes) -> [String: EmailPatch] {

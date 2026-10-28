@@ -155,7 +155,7 @@ struct ThreadView: View {
     @ToolbarContentBuilder private var respondItems: some CustomizableToolbarContent {
         ToolbarItem(id: "reply", placement: .primaryAction) {
             Button("Reply", systemImage: "arrowshape.turn.up.left") { reply() }
-                .help("Reply (⌘R)")
+                .help("Reply (⌥⌘R)")
                 .disabled(messages.isEmpty)
         }
         ToolbarItem(id: "replyAll", placement: .primaryAction, showsByDefault: false) {

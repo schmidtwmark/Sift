@@ -39,7 +39,7 @@ struct SiftCommands: Commands {
 
         CommandMenu("Mailbox") {
             Button("Get New Mail", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .keyboardShortcut("r")
                 .disabled(!ready || model.isSyncing)
             Divider()
             Button("Screener", systemImage: "person.crop.circle.badge.questionmark") { window?.show(.screener) }
@@ -100,8 +100,9 @@ private struct MessageMenu: View {
 
     var body: some View {
         let latest = selection?.latest
+        // ⌘R is Get New Mail.
         Button("Reply", systemImage: "arrowshape.turn.up.left") { latest.map { compose(ComposeRequest(replyTo: $0)) } }
-            .keyboardShortcut("r")
+            .keyboardShortcut("r", modifiers: [.command, .option])
             .disabled(latest == nil)
         Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { latest.map { compose(ComposeRequest(replyTo: $0, replyAll: true)) } }
             .keyboardShortcut("r", modifiers: [.command, .shift])

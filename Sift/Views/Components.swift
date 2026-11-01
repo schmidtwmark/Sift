@@ -410,6 +410,74 @@ struct ToastView: View {
     }
 }
 
+/// A spinner at the top while Sift fetches mail you didn't pull down for:
+/// opening the app, coming back to it, Get New Mail.
+/// Where the mail stands: checking for more, or when it was last up to date.
+/// The two share one spot, so the title doesn't shift as a sync starts and ends.
+struct SyncStatus: ToolbarContent {
+    let isChecking: Bool
+    /// Shown while not checking. On the Mac it's the window's subtitle instead
+    /// (`navigationSubtitle`), so only the spinner goes in the toolbar.
+    var updatedAt: Date?
+    /// Under a large title, as on iPhone's lists, rather than in the bar.
+    var underTitle = false
+
+    var body: some ToolbarContent {
+        #if os(iOS)
+        if isChecking || updatedAt != nil {
+            if underTitle {
+                // Under the title, large or scrolled up into the bar.
+                ToolbarItem(placement: .largeSubtitle) { status }
+                ToolbarItem(placement: .subtitle) { status }
+            } else {
+                ToolbarItem(placement: .principal) { status }
+                    .sharedBackgroundVisibility(.hidden)
+            }
+        }
+        #else
+        if isChecking {
+            ToolbarItem(placement: .primaryAction) { spinner.controlSize(.small) }
+                .sharedBackgroundVisibility(.hidden)
+        }
+        #endif
+    }
+
+    @ViewBuilder private var status: some View {
+        if isChecking {
+            // The bar's middle is narrow between its buttons: just the spinner.
+            if underTitle { checking } else { spinner }
+        } else if let updatedAt {
+            Text(Self.updated(updatedAt))
+                .font(underTitle ? .subheadline : .footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private var checking: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text("Checking for mail…")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var spinner: some View {
+        ProgressView()
+            .accessibilityLabel("Checking for mail")
+    }
+
+    /// "Updated 12:57 PM", "Updated yesterday at 8:02 PM", "Updated Oct 29".
+    static func updated(_ date: Date) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(date) { return "Updated \(time)" }
+        if Calendar.current.isDateInYesterday(date) { return "Updated yesterday at \(time)" }
+        return "Updated \(date.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+}
+
 extension Color {
     /// Behind the reader's message panels (Mail's grouped background).
     static var readerBackground: Color {

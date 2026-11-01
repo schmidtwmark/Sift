@@ -13,7 +13,8 @@ struct RootView: View {
         Group {
             switch model.phase {
             case .launching:
-                ProgressView()
+                // Only a moment: reading what's saved on this device.
+                Color.clear
             case .signedOut, .failed, .connecting:
                 OnboardingView()
             case .syncing:
@@ -79,12 +80,22 @@ struct MainView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(selection: $sidebar, showSettings: $showSettings)
+                // Here on the column itself: set inside the sidebar, it was ignored.
+                #if os(macOS)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 400)
+                #endif
         } content: {
             content
                 .searchable(text: $searchText, placement: .toolbar, prompt: "Search all mail")
                 .searchFocused($searchFocused)
                 .searchSuggestions { SearchSuggestions(text: $searchText) }
                 .plainSearchInput()
+                #if os(iOS)
+                .toolbar { SyncStatus(isChecking: model.isCatchingUp, updatedAt: updatedAt, underTitle: true) }
+                #else
+                .navigationSubtitle(updatedAt.map(SyncStatus.updated) ?? "")
+                .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 600)
+                #endif
         } detail: {
             detail
         }
@@ -150,6 +161,12 @@ struct MainView: View {
             pendingThread = threadId
             sidebar = .everything
         }
+    }
+
+    /// On the lists mail arrives in; not on Senders or search results.
+    private var updatedAt: Date? {
+        guard searchText.isEmpty, let sidebar, sidebar != .senders else { return nil }
+        return model.syncedAt
     }
 
     private var listMailbox: String? {

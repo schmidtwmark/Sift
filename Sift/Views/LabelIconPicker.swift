@@ -123,12 +123,17 @@ struct LabelIconPicker: View {
 /// Right-click (or long-press) a label for "Change Icon…".
 struct LabelIconEditing: ViewModifier {
     let mailboxId: String
+    /// Offers to put your labels in a different order too.
+    var onRearrange: (() -> Void)?
     @State private var isPicking = false
 
     func body(content: Content) -> some View {
         content
             .contextMenu {
                 Button("Change Icon…", systemImage: "square.grid.2x2") { isPicking = true }
+                if let onRearrange {
+                    Button("Rearrange Labels", systemImage: "arrow.up.arrow.down", action: onRearrange)
+                }
             }
             .popover(isPresented: $isPicking) {
                 #if os(macOS)

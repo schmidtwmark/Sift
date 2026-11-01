@@ -14,6 +14,8 @@ public actor SyncEngine {
         static let screenerId = "mailbox.screener"
         static let screenedOutId = "mailbox.screenedOut"
         static let bubbleUps = "bubbleUps"
+        static let identities = "identities"
+        static let syncedAt = "state.syncedAt"
     }
 
     public let store: MailStore
@@ -25,6 +27,9 @@ public actor SyncEngine {
 
     public private(set) var mailboxes: SpecialMailboxes?
     public private(set) var identities: [Identity] = []
+    /// When this device last finished catching up with Fastmail. Kept across
+    /// launches, so saved mail can say how old it is.
+    public private(set) var syncedAt: Date?
     private var activatedAt: Date = .now
     private var isRefreshing = false
     private var refreshAgain = false
@@ -32,6 +37,7 @@ public actor SyncEngine {
     /// Called with messages that arrived during this session (not on initial
     /// sync), after routing. The app turns these into notifications.
     private var newMailHandler: (@Sendable ([MessageRecord]) async -> Void)?
+    private var syncedHandler: (@Sendable (Date) async -> Void)?
 
     public init(client: JMAPClient, store: MailStore) {
         self.client = client
@@ -41,6 +47,11 @@ public actor SyncEngine {
 
     public func onNewMail(_ handler: @escaping @Sendable ([MessageRecord]) async -> Void) {
         newMailHandler = handler
+    }
+
+    /// Called with `syncedAt` each time a sync finishes.
+    public func onSynced(_ handler: @escaping @Sendable (Date) async -> Void) {
+        syncedHandler = handler
     }
 
     // MARK: - Lifecycle
@@ -60,9 +71,31 @@ public actor SyncEngine {
         try await syncRules()
         if try await store.value(for: Key.emailState) == nil {
             try await initialEmailSync()
+            await markSynced()
         } else {
             try await refresh()
         }
+    }
+
+    /// Picks up where this device left off, from what's saved, so the app can
+    /// open before Fastmail answers; `start` then catches up. False until the
+    /// account's first sync has finished here.
+    public func loadSaved() async throws -> Bool {
+        guard try await store.value(for: Key.emailState) != nil,
+              let screener = try await store.value(for: Key.screenerId),
+              let screenedOut = try await store.value(for: Key.screenedOutId),
+              let special = Self.special(in: try await store.mailboxes().map { ($0.id, $0.role) },
+                                         screener: screener, screenedOut: screenedOut)
+        else { return false }
+        mailboxes = special
+        if let stored = try await store.value(for: Key.activatedAt), let date = JMAPCoding.parseDate(stored) {
+            activatedAt = date
+        }
+        if let saved = try await store.value(for: Key.identities) {
+            identities = (try? JSONDecoder().decode([Identity].self, from: Data(saved.utf8))) ?? []
+        }
+        syncedAt = try await store.value(for: Key.syncedAt).flatMap(JMAPCoding.parseDate)
+        return true
     }
 
     /// Pulls every change since the last sync, then routes new mail.
@@ -85,6 +118,14 @@ public actor SyncEngine {
                 await newMailHandler(fresh)
             }
         } while refreshAgain
+        await markSynced()
+    }
+
+    private func markSynced() async {
+        let now = Date.now
+        syncedAt = now
+        try? await store.setValue(JMAPCoding.formatUTCDate(now), for: Key.syncedAt)
+        await syncedHandler?(now)
     }
 
     /// Holds Fastmail's EventSource open and refreshes on every state change.
@@ -132,11 +173,18 @@ public actor SyncEngine {
         try await store.replaceMailboxes(list)
         try await store.setValue(result.state, for: Key.mailboxState)
 
+        guard let special = Self.special(in: list.map { ($0.id, $0.role) }, screener: screener, screenedOut: screenedOut) else {
+            throw JMAPError.missingResponse("inbox mailbox")
+        }
+        mailboxes = special
+    }
+
+    private static func special(in list: [(id: String, role: String?)], screener: String, screenedOut: String) -> SpecialMailboxes? {
         func role(_ role: MailboxRole) -> String? { list.first { $0.role == role.rawValue }?.id }
-        guard let inbox = role(.inbox) else { throw JMAPError.missingResponse("inbox mailbox") }
-        mailboxes = SpecialMailboxes(inbox: inbox, screener: screener, screenedOut: screenedOut,
-                                     archive: role(.archive), trash: role(.trash), junk: role(.junk),
-                                     sent: role(.sent), drafts: role(.drafts))
+        guard let inbox = role(.inbox) else { return nil }
+        return SpecialMailboxes(inbox: inbox, screener: screener, screenedOut: screenedOut,
+                                archive: role(.archive), trash: role(.trash), junk: role(.junk),
+                                sent: role(.sent), drafts: role(.drafts))
     }
 
     private func ensureMailbox(named name: String, key: String, in list: inout [Mailbox]) async throws -> String {
@@ -210,6 +258,10 @@ public actor SyncEngine {
             MethodCall("Identity/get", ["accountId": .string(accountId)], id: "ids"),
         ], using: [JMAPCapability.core, JMAPCapability.mail, JMAPCapability.submission])
         identities = (try? response.result("ids", as: GetResponse<Identity>.self).list) ?? []
+        // Kept for `loadSaved`, so replies have a From address before Fastmail answers.
+        if let data = try? JSONEncoder().encode(identities) {
+            try await store.setValue(String(decoding: data, as: UTF8.self), for: Key.identities)
+        }
     }
 
     /// Reloads sender rules from Fastmail Contacts into the local cache.
@@ -399,13 +451,25 @@ public actor SyncEngine {
         for candidate in inbox {
             if try await store.hasWrittenTo(candidate.fromEmail) { known.insert(candidate.fromEmail) }
         }
+        // Threads you already have, not counting the mail being sorted now (two
+        // cold emails in one new thread still both meet the Screener).
+        let sorting = Set(inbox.map(\.id))
+        let quarantined = Set(boxes.quarantined)
+        var conversations: Set<String> = []
+        for threadId in Set(inbox.map(\.threadId)) {
+            let mates = try await store.read(.thread(threadId))
+            if mates.contains(where: { !sorting.contains($0.id) && $0.mailboxIds.contains { !quarantined.contains($0) } }) {
+                conversations.insert(threadId)
+            }
+        }
         let context = RoutingContext(
             mailboxes: boxes,
             activatedAt: activatedAt,
             ownAddresses: Set(identities.map { $0.email.lowercased() }),
             knownAddresses: known,
             rules: rulesByEmail,
-            unauthenticated: try await failingDMARC(spam.map(\.id))
+            unauthenticated: try await failingDMARC(spam.map(\.id)),
+            conversations: conversations
         )
         let plan = Router.plan(for: candidates, context: context)
         for address in plan.autoApproved {

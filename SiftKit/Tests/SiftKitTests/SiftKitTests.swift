@@ -158,6 +158,17 @@ let boxes = SpecialMailboxes(inbox: "inbox", screener: "screener", screenedOut: 
         #expect(plan.patches["1"] == ["keywords/$siftrouted": true])
     }
 
+    @Test func newcomersInYourConversationsSkipTheScreener() {
+        var ctx = context()
+        ctx.conversations = ["t-ongoing"]
+        let reply = email("1", from: "cc@new.example", thread: "t-ongoing")
+        let cold = email("2", from: "cc@new.example")
+        let plan = Router.plan(for: [reply, cold].map(MessageRecord.init), context: ctx)
+        #expect(plan.patches["1"] == ["keywords/$siftrouted": true])
+        #expect(plan.patches["2"]?["mailboxIds/screener"] == true)
+        #expect(plan.autoApproved.isEmpty)
+    }
+
     @Test func skipsGrandfatheredRoutedAndOwnMail() {
         let old = email("old", from: "a@x.com", received: activated.addingTimeInterval(-1))
         let routed = email("routed", from: "a@x.com", keywords: ["$siftrouted"])
@@ -528,6 +539,69 @@ let boxes = SpecialMailboxes(inbox: "inbox", screener: "screener", screenedOut: 
         try await engine.updateRule(SenderRecord(email: "hello@riddle.example", status: .screenedIn, labelIds: ["newsletters"]), refile: true)
         #expect(server.emailMailboxes(again) == ["newsletters"])
         #expect(server.emailMailboxes(caught) == ["newsletters"])
+    }
+
+    @Test func repliesKeepConversationsTogether() async throws {
+        let server = DemoServer()
+        let engine = try makeEngine(server)
+        try await engine.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+        try await engine.screenIn("pal@friend.example", name: "Pal", labels: [])
+        let opener = server.deliver(from: ("Pal", "pal@friend.example"), subject: "Dinner", text: "Friday?", threadId: "T-dinner")
+        try await engine.refresh()
+        #expect(server.emailMailboxes(opener) == ["inbox"])
+
+        // Someone Pal copied in replies: it stays with the conversation.
+        let reply = server.deliver(from: ("Sam", "sam@new.example"), subject: "Re: Dinner", text: "I'm in", threadId: "T-dinner")
+        // Two cold emails in a thread of their own both wait in the Screener.
+        let cold = server.deliver(from: ("Ads", "hi@ads.example"), subject: "Offer", text: "Buy", threadId: "T-ads")
+        let follow = server.deliver(from: ("Ads", "hi@ads.example"), subject: "Re: Offer", text: "Still?", threadId: "T-ads")
+        try await engine.refresh()
+        let screener = try #require(server.mailboxId(named: SyncEngine.screenerName))
+        #expect(server.emailMailboxes(reply) == ["inbox"])
+        #expect(server.emailMailboxes(cold) == [screener])
+        #expect(server.emailMailboxes(follow) == [screener])
+    }
+
+    @Test func opensFromWhatsSavedBeforeSyncing() async throws {
+        let server = DemoServer()
+        let first = try makeEngine(server)
+        #expect(try await first.loadSaved() == false)
+        try await first.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+
+        // The next launch reads the same store, without asking Fastmail.
+        let client = JMAPClient(token: "demo", sessionURL: DemoServer.sessionURL, urlSession: server.urlSession())
+        let next = SyncEngine(client: client, store: await first.store)
+        #expect(try await next.loadSaved())
+        #expect(await next.mailboxes == (await first.mailboxes))
+        #expect(await next.identities == (await first.identities))
+        #expect(await !next.identities.isEmpty)
+        // ...and how old it is, to the second.
+        let synced = try #require(await first.syncedAt)
+        let restored = try #require(await next.syncedAt)
+        #expect(abs(restored.timeIntervalSince(synced)) < 1)
+    }
+
+    @Test func readsGetPastAStaleConnection() async throws {
+        let server = DemoServer()
+        let engine = try makeEngine(server)
+        try await engine.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+        let message = try #require(try await engine.store.messages(in: "inbox").first)
+
+        // The first try at the body goes out on a dead connection; the retry gets it.
+        server.connectionDrops = 1
+        _ = try await engine.body(for: message.id)
+        #expect(server.connectionDrops == 0)
+
+        // A change isn't sent again, since it may have reached Fastmail already.
+        server.connectionDrops = 1
+        let client = await engine.client
+        let accountId = try await client.accountId()
+        await #expect(throws: URLError.self) {
+            try await client.perform([MethodCall("Email/set", [
+                "accountId": .string(accountId),
+                "update": [message.id: ["keywords/$flagged": true]],
+            ], id: "flag")])
+        }
     }
 
     @Test func honoursContactsAddedToGroupsInFastmail() async throws {

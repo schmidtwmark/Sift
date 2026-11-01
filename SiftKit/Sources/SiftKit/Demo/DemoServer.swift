@@ -41,6 +41,17 @@ public final class DemoServer: @unchecked Sendable {
     public var emailSetDelay: TimeInterval = 0
     /// Advertised `maxDelayedSend`: how long submissions may be held (Undo Send).
     public var maxDelayedSend = 0
+    /// Drop the connection under this many of the next requests, as a stale
+    /// one does: the request goes out and no answer comes back.
+    public var connectionDrops = 0
+
+    func takeConnectionDrop() -> Bool {
+        locked {
+            guard connectionDrops > 0 else { return false }
+            connectionDrops -= 1
+            return true
+        }
+    }
 
     public func submission(_ id: String) -> (emailId: String, undoStatus: String, holdFor: Int)? {
         locked { submissions[id].map { ($0.emailId, $0.undoStatus, $0.holdFor) } }
@@ -673,6 +684,10 @@ final class DemoURLProtocol: URLProtocol, @unchecked Sendable {
         let id = request.value(forHTTPHeaderField: Self.header) ?? ""
         guard let server = Self.registryLock.withLock({ Self.servers[id] }), let url = request.url else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        if server.takeConnectionDrop() {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
             return
         }
         var body = request.httpBody

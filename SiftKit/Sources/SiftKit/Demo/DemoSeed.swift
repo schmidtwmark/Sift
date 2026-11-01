@@ -42,7 +42,7 @@ public enum DemoSeed {
         server.deliver(from: ("Field Notes Digest", "digest@fieldnotes.example"), subject: "Issue 88: The quiet internet",
                        text: "This week: small web, slow software, and why your inbox should be boring.",
                        html: newsletterHTML(title: "The quiet internet", pixel: nil),
-                       mailbox: "newsletters", receivedAt: ago(5), keywords: ["$seen"])
+                       mailbox: "newsletters", receivedAt: ago(5))
         server.deliver(from: ("Alex Rivera", "alex@rivera.example"), subject: "Photos from the crag",
                        text: "Dumped everything into the shared album. The one of you on the arete is great.",
                        mailbox: "archive", receivedAt: ago(4), keywords: ["$seen"])

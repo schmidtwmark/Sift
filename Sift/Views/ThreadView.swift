@@ -427,6 +427,8 @@ struct MessageCard: View {
     @State private var body_: BodyRecord?
     @State private var prepared: MessageHTML.Prepared?
     @State private var loadError: String?
+    /// Bumped by Try Again to load the body afresh.
+    @State private var loadAttempt = 0
     @State private var allowRemoteOnce = false
     @State private var showTrackers = false
     @State private var showAddresses = false
@@ -453,8 +455,9 @@ struct MessageCard: View {
             }
         }
         .background(Color.readerPanel, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .task(id: isExpanded) {
+        .task(id: "\(isExpanded)-\(loadAttempt)") {
             guard isExpanded, prepared == nil else { return }
+            loadError = nil
             do {
                 let body = try await model.body(for: message)
                 body_ = body
@@ -465,6 +468,7 @@ struct MessageCard: View {
                     let shown = message
                     Task { await model.markRead([shown]) }
                 }
+            } catch is CancellationError {
             } catch {
                 loadError = "Couldn't load this message. \(error.localizedDescription)"
             }
@@ -487,7 +491,11 @@ struct MessageCard: View {
                 }
             }
         } else if let loadError {
-            Label(loadError, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                Label(loadError, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+                Button("Try Again", systemImage: "arrow.clockwise") { loadAttempt += 1 }
+                    .buttonStyle(.bordered)
+            }
         } else {
             ProgressView().frame(maxWidth: .infinity, minHeight: 80)
         }

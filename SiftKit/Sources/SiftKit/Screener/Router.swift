@@ -42,15 +42,20 @@ public struct RoutingContext: Sendable {
     /// Spam whose sender address failed Fastmail's DMARC check: it may not be
     /// from them, so it stays in Spam even if they're screened in.
     public var unauthenticated: Set<String>
+    /// Threads you already have mail in outside the Screener and the other
+    /// quarantined piles: the Inbox, your labels, Archive or Sent.
+    public var conversations: Set<String>
 
     public init(mailboxes: SpecialMailboxes, activatedAt: Date, ownAddresses: Set<String>,
-                knownAddresses: Set<String>, rules: [String: SenderRecord], unauthenticated: Set<String> = []) {
+                knownAddresses: Set<String>, rules: [String: SenderRecord], unauthenticated: Set<String> = [],
+                conversations: Set<String> = []) {
         self.mailboxes = mailboxes
         self.activatedAt = activatedAt
         self.ownAddresses = ownAddresses
         self.knownAddresses = knownAddresses
         self.rules = rules
         self.unauthenticated = unauthenticated
+        self.conversations = conversations
     }
 }
 
@@ -104,6 +109,10 @@ public enum Router {
                 if approved.insert(sender).inserted {
                     plan.autoApproved.append(message.sender)
                 }
+            } else if context.conversations.contains(message.threadId) {
+                // A newcomer replying in a conversation you already have stays with
+                // it, rather than splitting it between the Inbox and the Screener.
+                // Writing to you fresh still meets the Screener.
             } else {
                 patch.merge(move(from: [boxes.inbox], to: [boxes.screener]), uniquingKeysWith: { $1 })
             }

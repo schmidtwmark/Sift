@@ -16,6 +16,29 @@ public extension Error {
         if case .http(let status, _)? = self as? JMAPError { return [502, 503, 504].contains(status) }
         return false
     }
+
+    /// A hiccup that a second try moments later may well get past. Not a
+    /// timeout (that took a minute already) or being offline.
+    var isWorthRetrying: Bool {
+        if let error = self as? URLError, [.timedOut, .notConnectedToInternet].contains(error.code) { return false }
+        return isTransientNetworkFailure
+    }
+
+    /// Enough to tell failures apart in the log, with no addresses or URLs.
+    var logDescription: String {
+        if let error = self as? URLError { return "URLError \(error.code.rawValue)" }
+        if let error = self as? JMAPError, case .http(let status, _) = error { return "HTTP \(status)" }
+        return String(describing: type(of: self))
+    }
+
+    /// Fastmail won't take this token: revoked, mistyped, or missing a scope.
+    /// A new token is the fix.
+    var isCredentialProblem: Bool {
+        switch self as? JMAPError {
+        case .unauthorized?, .forbidden?, .missingScopes?: true
+        default: false
+        }
+    }
 }
 
 public enum JMAPError: Error, LocalizedError, Sendable, Equatable {
@@ -85,6 +108,11 @@ public struct MethodCall: Sendable, Encodable {
         try container.encode(id)
     }
 
+    /// Reading changes nothing on Fastmail, so it's safe to send again.
+    var isReadOnly: Bool {
+        ["/get", "/query", "/changes", "/queryChanges"].contains { name.hasSuffix($0) }
+    }
+
     /// A result reference (`#name`) pointing at a path in an earlier call's result.
     public static func reference(to callId: String, name: String, path: String) -> JSONValue {
         ["resultOf": .string(callId), "name": .string(name), "path": .string(path)]
@@ -135,7 +163,7 @@ public actor JMAPClient {
 
     public func session(refresh: Bool = false) async throws -> JMAPSession {
         if let cachedSession, !refresh { return cachedSession }
-        let data = try await send(authorized(URLRequest(url: sessionURL)))
+        let data = try await send(authorized(URLRequest(url: sessionURL)), label: "session", retrying: true)
         let session = try JMAPCoding.decoder.decode(JMAPSession.self, from: data)
         cachedSession = session
         return session
@@ -159,7 +187,8 @@ public actor JMAPClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JMAPCoding.encoder.encode(Body(using: capabilities, methodCalls: calls))
-        let data = try await send(request)
+        let data = try await send(request, label: calls.map(\.name).joined(separator: ", "),
+                                  retrying: calls.allSatisfy(\.isReadOnly))
 
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let responses = root["methodResponses"] as? [[Any]] else {
@@ -182,7 +211,7 @@ public actor JMAPClient {
         guard let url = session.downloadURL(accountId: try await accountId(), blobId: blobId, name: name, type: type) else {
             throw JMAPError.badURL
         }
-        return try await send(authorized(URLRequest(url: url)))
+        return try await send(authorized(URLRequest(url: url)), label: "download", retrying: true)
     }
 
     public func upload(_ data: Data, type: String) async throws -> String {
@@ -193,7 +222,7 @@ public actor JMAPClient {
         request.httpMethod = "POST"
         request.setValue(type, forHTTPHeaderField: "Content-Type")
         request.httpBody = data
-        let response = try JMAPCoding.decoder.decode(UploadResponse.self, from: try await send(request))
+        let response = try JMAPCoding.decoder.decode(UploadResponse.self, from: try await send(request, label: "upload"))
         return response.blobId
     }
 
@@ -248,10 +277,28 @@ public actor JMAPClient {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await urlSession.data(for: request)
-        try check(response, body: data)
-        return data
+    /// `retrying` is for requests that are safe to send twice. A connection
+    /// that went stale while idle (after the Mac sleeps, say) fails whatever
+    /// is sent on it next, and the system only resends GETs by itself.
+    private func send(_ request: URLRequest, label: String, retrying: Bool = false) async throws -> Data {
+        let delays: [Duration] = retrying ? [.milliseconds(300), .seconds(1)] : []
+        var attempt = 1
+        while true {
+            do {
+                let (data, response) = try await urlSession.data(for: request)
+                try check(response, body: data)
+                if attempt > 1 { Self.log.notice("\(label, privacy: .public) went through on attempt \(attempt)") }
+                return data
+            } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw error
+            } catch {
+                // Never logs the request, so the token stays out of the system log.
+                Self.log.error("\(label, privacy: .public) failed on attempt \(attempt): \(error.logDescription, privacy: .public)")
+                guard attempt <= delays.count, error.isWorthRetrying else { throw error }
+                try await Task.sleep(for: delays[attempt - 1])
+                attempt += 1
+            }
+        }
     }
 
     static let log = Logger(subsystem: "com.markschmidt.Sift", category: "jmap")

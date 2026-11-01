@@ -61,8 +61,15 @@ final class AppModel {
         set { if !newValue { errorMessage = nil } }
     }
     private(set) var isSyncing = false
+    /// Fetching mail you didn't pull down for (opening the app, coming back to
+    /// it, Get New Mail), shown as a spinner at the top.
+    private(set) var isCatchingUp = false
+    /// When the mail on screen was last brought up to date with Fastmail.
+    private(set) var syncedAt: Date?
 
     @ObservationIgnored let notifier = Notifier()
+    /// The sync started at launch, while it runs.
+    @ObservationIgnored private var catchingUp: Task<Void, Never>?
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
 
     init() {
@@ -76,6 +83,7 @@ final class AppModel {
         if ProcessInfo.processInfo.arguments.contains("-demo") {
             await startDemo()
         } else if let token = Keychain.token() {
+            if await resume(token: token) { return }
             await connect(token: token, saving: false)
         } else {
             phase = .signedOut
@@ -83,7 +91,9 @@ final class AppModel {
     }
 
     func connect(token: String, saving: Bool = true) async {
-        phase = .connecting
+        // Onboarding stays up while a token you entered is checked; a saved one
+        // goes straight to syncing.
+        phase = saving ? .connecting : .syncing
         do {
             let client = JMAPClient(token: token)
             let session = try await client.session(refresh: true)
@@ -93,6 +103,7 @@ final class AppModel {
             guard missing.isEmpty else { throw JMAPError.missingScopes(missing) }
             let store = try MailStore.onDisk(named: "Sift-\(session.username)")
             if saving { Keychain.save(token: token) }
+            UserDefaults.standard.set(session.username, forKey: Self.usernameKey)
             username = session.username
             phase = .syncing
             try await start(SyncEngine(client: client, store: store), store: store, activatedAt: nil)
@@ -118,15 +129,87 @@ final class AppModel {
         }
     }
 
-    private func start(_ engine: SyncEngine, store: MailStore, activatedAt: Date?) async throws {
-        self.engine = engine
-        self.store = store
-        await engine.onNewMail { [weak self] messages in
-            await self?.handleNewMail(messages)
+    /// Whose mail is saved on this device, so the next launch can open it
+    /// before Fastmail answers.
+    private static let usernameKey = "account.username"
+
+    /// Opens straight to the mail saved on this device, then catches up with
+    /// Fastmail in the background. False when there's nothing saved yet.
+    private func resume(token: String) async -> Bool {
+        guard let username = UserDefaults.standard.string(forKey: Self.usernameKey),
+              let store = try? MailStore.onDisk(named: "Sift-\(username)") else { return false }
+        let engine = SyncEngine(client: JMAPClient(token: token), store: store)
+        guard (try? await engine.loadSaved()) == true else { return false }
+        self.username = username
+        syncedAt = await engine.syncedAt
+        await follow(engine)
+        // Before the mail shows, so coming to the front doesn't start a second sync.
+        isSyncing = true
+        isCatchingUp = true
+        do {
+            try await open(engine, store: store)
+        } catch {
+            isSyncing = false
+            isCatchingUp = false
+            return false
         }
+        let task = Task<Void, Never> { [weak self] in await self?.catchUp(engine) }
+        catchingUp = task
+        tasks.append(task)
+        return true
+    }
+
+    private func catchUp(_ engine: SyncEngine) async {
+        defer {
+            isSyncing = false
+            isCatchingUp = false
+            catchingUp = nil
+        }
+        do {
+            try await engine.start()
+            special = await engine.mailboxes
+            identities = await engine.identities
+        } catch is CancellationError {
+            return
+        } catch where error.isCredentialProblem {
+            // The token was revoked or changed: back to onboarding to enter a new one.
+            close()
+            phase = .failed(error.localizedDescription)
+            return
+        } catch where error.isTransientNetworkFailure {
+            // Offline: what's saved stays up, and listening retries until Fastmail answers.
+            syncLog.notice("Couldn't reach Fastmail at launch: \(error.localizedDescription, privacy: .public)")
+        } catch {
+            syncLog.error("Launch sync failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = error.localizedDescription
+        }
+        tasks.append(Task { [engine] in await engine.listen() })
+    }
+
+    private func start(_ engine: SyncEngine, store: MailStore, activatedAt: Date?) async throws {
+        await follow(engine)
         isSyncing = true
         defer { isSyncing = false }
         try await engine.start(activatedAt: activatedAt)
+        try await open(engine, store: store)
+        tasks.append(Task { [engine] in await engine.listen() })
+    }
+
+    /// New mail becomes notifications, and each finished sync (pushes from
+    /// Fastmail included) moves the time shown on the lists.
+    private func follow(_ engine: SyncEngine) async {
+        await engine.onNewMail { [weak self] messages in
+            await self?.handleNewMail(messages)
+        }
+        await engine.onSynced { @MainActor [weak self] date in
+            self?.syncedAt = date
+        }
+    }
+
+    /// Shows the account's mail, as far as `engine` has it.
+    private func open(_ engine: SyncEngine, store: MailStore) async throws {
+        self.engine = engine
+        self.store = store
         special = await engine.mailboxes
         identities = await engine.identities
         if let raw = try await store.value(for: "screener.activatedAt") {
@@ -138,21 +221,29 @@ final class AppModel {
         }
         phase = .ready
         observe()
-        tasks.append(Task { [engine] in await engine.listen() })
     }
 
     func signOut() {
+        if !isDemo {
+            Keychain.deleteToken()
+            UserDefaults.standard.removeObject(forKey: Self.usernameKey)
+        }
+        close()
+        phase = .signedOut
+    }
+
+    private func close() {
         tasks.forEach { $0.cancel() }
         tasks = []
-        if !isDemo { Keychain.deleteToken() }
+        catchingUp = nil
         engine = nil
         store = nil
         mailboxes = []
         labelIcons = [:]
         special = nil
+        syncedAt = nil
         isDemo = false
         defaultSidebar = .screener
-        phase = .signedOut
     }
 
     private func observe() {
@@ -200,9 +291,24 @@ final class AppModel {
     @ObservationIgnored private let syncLog = Logger(subsystem: "com.markschmidt.Sift", category: "sync")
 
     func refresh(_ trigger: RefreshTrigger = .user) async {
+        // Opening the app already started one, so wait for that instead
+        // (background refresh has to stay awake until the mail's in).
+        if let catchingUp {
+            await catchingUp.value
+            return
+        }
         guard let engine, phase == .ready, !isSyncing else { return }
         isSyncing = true
-        defer { isSyncing = false }
+        #if os(iOS)
+        // Pull to refresh shows its own spinner.
+        isCatchingUp = trigger == .automatic
+        #else
+        isCatchingUp = true
+        #endif
+        defer {
+            isSyncing = false
+            isCatchingUp = false
+        }
         // Syncing is safe to repeat, so a network hiccup gets one quiet retry.
         for attempt in 1...2 {
             do {

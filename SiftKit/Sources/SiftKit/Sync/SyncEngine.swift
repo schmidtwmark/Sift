@@ -1225,9 +1225,10 @@ public actor SyncEngine {
                 "accountId": .string(accountId),
                 "ids": [.string(id)],
                 "properties": .strings(["id", "from", "to", "cc", "bcc", "subject", "inReplyTo", "references",
-                                        "textBody", "attachments", "bodyValues"]),
+                                        "textBody", "htmlBody", "attachments", "bodyValues"]),
                 "bodyProperties": .strings(["partId", "blobId", "size", "name", "type", "disposition"]),
                 "fetchTextBodyValues": true,
+                "fetchHTMLBodyValues": true,
             ], id: "draft"),
         ])
         guard let email = try response.result("draft", as: GetResponse<Email>.self).list.first else {
@@ -1235,11 +1236,15 @@ public actor SyncEngine {
         }
         let fromAddress = email.from?.first?.normalized
         let identity = identities.first { $0.email.lowercased() == fromAddress } ?? identities.first
-        let text = (email.textBody ?? []).compactMap { $0.partId.flatMap { email.bodyValues?[$0]?.value } }.joined(separator: "\n")
+        func values(_ parts: [EmailBodyPart]?) -> [String] {
+            (parts ?? []).compactMap { $0.partId.flatMap { email.bodyValues?[$0]?.value } }
+        }
+        let text = values(email.textBody).joined(separator: "\n")
+        let html = values(email.htmlBody?.filter { $0.type == "text/html" }).joined()
         return OutgoingMessage(
             identityId: identity?.id ?? "",
             to: email.to ?? [], cc: email.cc ?? [], bcc: email.bcc ?? [],
-            subject: email.subject ?? "", body: text,
+            subject: email.subject ?? "", body: text, html: html.isEmpty ? nil : html,
             attachments: (email.attachments ?? []).compactMap { part in
                 part.blobId.map { .init(blobId: $0, name: part.name ?? "Attachment", type: part.type ?? "application/octet-stream", size: part.size ?? 0) }
             },
@@ -1277,6 +1282,11 @@ public actor SyncEngine {
             "bodyValues": ["body": ["value": .string(message.body)]],
             "textBody": [["partId": "body", "type": "text/plain"]],
         ]
+        // With links, an HTML version too; Fastmail sends the two as alternatives.
+        if let html = message.html {
+            email["bodyValues"] = ["body": ["value": .string(message.body)], "html": ["value": .string(html)]]
+            email["htmlBody"] = [["partId": "html", "type": "text/html"]]
+        }
         if let identity { email["from"] = [["name": .string(identity.name), "email": .string(identity.email)]] }
         if !message.to.isEmpty { email["to"] = addresses(message.to) }
         if !message.cc.isEmpty { email["cc"] = addresses(message.cc) }

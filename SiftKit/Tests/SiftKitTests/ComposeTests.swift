@@ -39,9 +39,23 @@ import Testing
         #expect(reopened.body == "See you at 8.")
         #expect(reopened.to.map(\.email) == ["alex@rivera.example"])
         #expect(reopened.attachments.map(\.name) == ["notes.txt"])
+        #expect(reopened.html == nil)
 
         try await engine.discardDraft(second)
         #expect(!server.emailExists(second))
+    }
+
+    @Test func draftsKeepTheirLinks() async throws {
+        let server = DemoServer()
+        let engine = try await makeEngine(server)
+        var draft = try await message(engine)
+        draft.body = "Menu <https://example.com/menu>"
+        draft.html = "<div dir=\"auto\"><a href=\"https://example.com/menu\">Menu</a></div>"
+        let id = try await engine.saveDraft(draft)
+
+        let reopened = try await engine.outgoingMessage(fromDraft: id)
+        #expect(reopened.body == draft.body)
+        #expect(reopened.html == draft.html)
     }
 
     @Test func sendingADraftFilesItInSent() async throws {

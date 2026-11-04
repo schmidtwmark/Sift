@@ -21,6 +21,10 @@ struct ComposeView: View {
     @State private var choosingFiles = false
     @State private var choosingPhotos = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var selection = AttributedTextSelection()
+    /// Add Link's prompt: the address typed, and what it applies to.
+    @State private var linkAddress = ""
+    @State private var linkTarget: AttributedTextSelection?
 
     var body: some View {
         NavigationStack {
@@ -76,6 +80,19 @@ struct ComposeView: View {
             Button("Send Anyway") { Task { await send() } }
             Button("Cancel", role: .cancel) { focus = .subject }
         }
+        .alert(linkTarget.flatMap(existingLink) == nil ? "Add Link" : "Edit Link", isPresented: addingLink) {
+            TextField("example.com", text: $linkAddress)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                #endif
+            Button("OK") { setLink(RichBody.url(from: linkAddress)) }
+            if linkTarget.flatMap(existingLink) != nil {
+                Button("Remove Link", role: .destructive) { setLink(nil) }
+            }
+            Button("Cancel", role: .cancel) { linkTarget = nil }
+        }
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
             for url in urls { Task { await draft.attach(fileAt: url, model: model) } }
@@ -117,7 +134,9 @@ struct ComposeView: View {
                     .accessibilityLabel("Subject")
             }
             if !draft.attachments.isEmpty { attachmentStrip }
-            TextEditor(text: $draft.body)
+            TextEditor(text: $draft.body, selection: $selection)
+                // Links are all a message is sent with, so they're all a paste keeps.
+                .attributedTextFormattingDefinition(\.compose)
                 .focused($focus, equals: .body)
                 .font(.body)
                 .scrollContentBackground(.hidden)
@@ -351,10 +370,12 @@ struct ComposeView: View {
         ToolbarItem(placement: .cancellationAction) {
             Button("Cancel", systemImage: "xmark") { cancel() }
         }
+        ToolbarItem(placement: .primaryAction) { linkButton }
         ToolbarItem(placement: .primaryAction) { attachMenu }
         ToolbarItem(placement: .confirmationAction) { sendButton }
         #else
         ToolbarItem(placement: .navigation) { sendButton }
+        ToolbarItem(placement: .primaryAction) { linkButton }
         ToolbarItem(placement: .primaryAction) { attachMenu }
         ToolbarItem(placement: .primaryAction) {
             Button("Delete Draft", systemImage: "trash") {
@@ -406,6 +427,61 @@ struct ComposeView: View {
             Label("Attach", systemImage: "paperclip")
         }
         .help("Attach photos or files")
+    }
+
+    private var linkButton: some View {
+        Button("Add Link", systemImage: "link") {
+            linkTarget = selection
+            linkAddress = existingLink(in: selection)?.url.absoluteString ?? ""
+        }
+        .keyboardShortcut("k", modifiers: .command)
+        .help("Add Link (⌘K)")
+        .disabled(focus != .body)
+    }
+
+    private var addingLink: Binding<Bool> {
+        Binding { linkTarget != nil } set: { if !$0 { linkTarget = nil } }
+    }
+
+    /// The link a selection is on: the caret's in it, or the selected text is
+    /// all inside it. Its whole extent, so editing it changes all of it.
+    private func existingLink(in selection: AttributedTextSelection) -> (range: Range<AttributedString.Index>, url: URL)? {
+        let text = draft.body
+        func inside(_ range: Range<AttributedString.Index>) -> Bool {
+            switch selection.indices(in: text) {
+            case .insertionPoint(let point): range.lowerBound < point && point <= range.upperBound
+            case .ranges(let selected): selected.ranges.allSatisfy { range.lowerBound <= $0.lowerBound && $0.upperBound <= range.upperBound }
+            }
+        }
+        for run in text.runs {
+            if let url = run.link, inside(run.range) { return (run.range, url) }
+        }
+        return nil
+    }
+
+    /// Links what Add Link was opened on, or with nil, unlinks it.
+    private func setLink(_ url: URL?) {
+        guard var target = linkTarget else { return }
+        linkTarget = nil
+        defer { focus = .body }
+        if let existing = existingLink(in: target) {
+            draft.body[existing.range].link = url
+            return
+        }
+        guard let url else { return }
+        if case .insertionPoint = target.indices(in: draft.body) {
+            // Nothing selected: the address goes in as its own link, and what's
+            // typed after it isn't part of it.
+            var words = AttributedString(url.scheme == "mailto" ? String(url.absoluteString.dropFirst(7)) : url.absoluteString)
+            words.link = url
+            draft.body.replaceSelection(&target, with: words)
+            if case .insertionPoint(let end) = target.indices(in: draft.body) {
+                target = AttributedTextSelection(insertionPoint: end, typingAttributes: AttributeContainer())
+            }
+        } else {
+            draft.body.transformAttributes(in: &target) { $0.link = url }
+        }
+        selection = target
     }
 
     // MARK: - Actions
@@ -526,4 +602,13 @@ extension Color {
         Color(nsColor: .textBackgroundColor)
         #endif
     }
+}
+
+extension AttributeScopes {
+    /// What a message body keeps as you write it: links, which it's sent with.
+    struct ComposeAttributes: AttributeScope {
+        let link: AttributeScopes.FoundationAttributes.LinkAttribute
+    }
+
+    var compose: ComposeAttributes.Type { ComposeAttributes.self }
 }

@@ -36,7 +36,8 @@ final class ComposeDraft {
     var ccText = ""
     var bccText = ""
     var subject = ""
-    var body = ""
+    /// What's written, links and all.
+    var body = AttributedString()
     var attachments: [PendingAttachment] = []
     /// iPhone shows "Cc/Bcc, From:" on one line until it's tapped.
     var showsAllHeaders = false
@@ -59,7 +60,7 @@ final class ComposeDraft {
         OutgoingMessage(
             identityId: identityId,
             to: to + Self.parse(toText), cc: cc + Self.parse(ccText), bcc: bcc + Self.parse(bccText),
-            subject: subject, body: body,
+            subject: subject, body: RichBody.plainText(body), html: RichBody.html(body),
             attachments: attachments.compactMap { if case .ready(let file) = $0.state { file } else { nil } },
             inReplyTo: inReplyTo, references: references, answering: answering, draftId: draftId
         )
@@ -89,7 +90,7 @@ final class ComposeDraft {
             identityId = draft.identityId.isEmpty ? identityId : draft.identityId
             (to, cc, bcc) = (draft.to, draft.cc, draft.bcc)
             subject = draft.subject
-            body = draft.body
+            body = draft.html.map(RichBody.attributedString(html:)) ?? AttributedString(draft.body)
             attachments = draft.attachments.map { .init(name: $0.name, type: $0.type, size: $0.size, state: .ready($0)) }
             (inReplyTo, references, answering, draftId) = (draft.inReplyTo, draft.references, draft.answering, draft.draftId)
             showsAllHeaders = !cc.isEmpty || !bcc.isEmpty
@@ -99,7 +100,7 @@ final class ComposeDraft {
             cc = link.cc.flatMap(Self.parse)
             bcc = link.bcc.flatMap(Self.parse)
             subject = link.subject ?? ""
-            body = link.body ?? ""
+            body = AttributedString(link.body ?? "")
             showsAllHeaders = !cc.isEmpty || !bcc.isEmpty
             focus = to.isEmpty ? .to : .body
         } else if let original = request.replyTo {
@@ -124,14 +125,14 @@ final class ComposeDraft {
             let quoted = await Self.quotedText(of: original, model: model)
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .map { "> \($0)" }.joined(separator: "\n")
-            body = signatureBlock(model) + "\n\nOn \(original.receivedAt.formatted(date: .abbreviated, time: .shortened)), \(original.senderDisplayName) wrote:\n\n\(quoted)"
+            body = AttributedString(signatureBlock(model) + "\n\nOn \(original.receivedAt.formatted(date: .abbreviated, time: .shortened)), \(original.senderDisplayName) wrote:\n\n\(quoted)")
             showsAllHeaders = !cc.isEmpty
             focus = .body
         } else if let original = request.forward {
             kind = "Forward"
             subject = original.subject.lowercased().hasPrefix("fwd:") ? original.subject : "Fwd: \(original.subject)"
             let text = await Self.quotedText(of: original, model: model)
-            body = signatureBlock(model) + """
+            body = AttributedString(signatureBlock(model) + """
 
 
                 Begin forwarded message:
@@ -142,7 +143,7 @@ final class ComposeDraft {
                 To: \(original.to.map(Self.format).joined(separator: ", "))
 
                 \(text)
-                """
+                """)
             // The originals' files come along without uploading them again.
             if let files = try? await model.body(for: original).attachments {
                 attachments = files.compactMap { part in
@@ -154,7 +155,7 @@ final class ComposeDraft {
                 }
             }
         } else {
-            body = signatureBlock(model)
+            body = AttributedString(signatureBlock(model))
         }
         savedContent = message.content
         return focus

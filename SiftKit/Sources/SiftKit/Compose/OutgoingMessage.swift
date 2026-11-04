@@ -24,6 +24,9 @@ public struct OutgoingMessage: Codable, Sendable, Hashable {
     public var bcc: [EmailAddress]
     public var subject: String
     public var body: String
+    /// The body with its links, when it has any (see `RichBody`); `body` is
+    /// its plain-text version.
+    public var html: String?
     public var attachments: [Attachment]
     /// Threading headers, so replies stay in their conversation.
     public var inReplyTo: [String]
@@ -34,7 +37,7 @@ public struct OutgoingMessage: Codable, Sendable, Hashable {
     public var draftId: String?
 
     public init(identityId: String = "", to: [EmailAddress] = [], cc: [EmailAddress] = [], bcc: [EmailAddress] = [],
-                subject: String = "", body: String = "", attachments: [Attachment] = [],
+                subject: String = "", body: String = "", html: String? = nil, attachments: [Attachment] = [],
                 inReplyTo: [String] = [], references: [String] = [], answering: String? = nil, draftId: String? = nil) {
         self.identityId = identityId
         self.to = to
@@ -42,6 +45,7 @@ public struct OutgoingMessage: Codable, Sendable, Hashable {
         self.bcc = bcc
         self.subject = subject
         self.body = body
+        self.html = html
         self.attachments = attachments
         self.inReplyTo = inReplyTo
         self.references = references

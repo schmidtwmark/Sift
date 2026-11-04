@@ -500,12 +500,16 @@ public final class DemoServer: @unchecked Sendable {
             if email["messageId"] == nil { email["messageId"] = ["<\(id)@demo.sift>"] }
             email["blobId"] = "B\(id)"
             email["receivedAt"] = JMAPCoding.formatUTCDate(.now)
-            let text = ((value["bodyValues"] as? [String: [String: Any]])?.values.first?["value"] as? String) ?? ""
+            let values = value["bodyValues"] as? [String: [String: Any]] ?? [:]
+            func part(_ key: String) -> String? {
+                ((value[key] as? [[String: Any]])?.first?["partId"] as? String).flatMap { values[$0]?["value"] as? String }
+            }
+            let text = part("textBody") ?? ""
             email["preview"] = String(text.prefix(180))
             email["hasAttachment"] = !((value["attachments"] as? [Any]) ?? []).isEmpty
             email["size"] = text.utf8.count
             emails[id] = email
-            bodies[id] = (nil, text)
+            bodies[id] = (part("htmlBody"), text)
             created[key] = ["id": id, "threadId": email["threadId"] ?? "T\(id)", "blobId": "B\(id)"]
         }
         var destroyed: [String] = []

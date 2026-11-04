@@ -68,6 +68,7 @@ final class AppModel {
     private(set) var syncedAt: Date?
 
     @ObservationIgnored let notifier = Notifier()
+    @ObservationIgnored private var launching: Task<Void, Never>?
     /// The sync started at launch, while it runs.
     @ObservationIgnored private var catchingUp: Task<Void, Never>?
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -78,7 +79,17 @@ final class AppModel {
 
     // MARK: - Connection
 
+    /// Every window and the background refresh ask for a launch; all but the
+    /// first wait for that one. Two at once would each open the database and
+    /// trip over each other's writes ("database is locked").
     func launch() async {
+        if launching == nil {
+            launching = Task { await performLaunch() }
+        }
+        await launching?.value
+    }
+
+    private func performLaunch() async {
         guard phase == .launching else { return }
         if ProcessInfo.processInfo.arguments.contains("-demo") {
             await startDemo()

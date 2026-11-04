@@ -390,7 +390,9 @@ struct SidebarView: View {
         #if os(iOS)
         EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)
         #else
-        EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8)
+        // The Mac clips each row to its bounds, so this leaves room above for
+        // the Inbox's badge, which sits over the tile's corner.
+        EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         #endif
     }
 

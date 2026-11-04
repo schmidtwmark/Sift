@@ -66,11 +66,14 @@ public actor SyncEngine {
             activatedAt = override ?? .now
             try await store.setValue(JMAPCoding.formatUTCDate(activatedAt), for: Key.activatedAt)
         }
-        try await syncMailboxes()
+        // Mailboxes saved on this device are enough to sort new mail with;
+        // `refresh` brings them up to date once it's sorted.
+        if mailboxes == nil { try await syncMailboxes() }
         try await syncIdentities()
         try await syncRules()
         if try await store.value(for: Key.emailState) == nil {
             try await initialEmailSync()
+            try await syncMailboxes()
             await markSynced()
         } else {
             try await refresh()
@@ -108,9 +111,15 @@ public actor SyncEngine {
         defer { isRefreshing = false }
         repeat {
             refreshAgain = false
-            try await syncMailboxes()
             let created = try await syncEmailChanges()
-            try await route()
+            // Mailboxes after sorting, so their unread counts never include mail
+            // on its way out of the Inbox (to the Screener, say). They're synced
+            // even if sorting fails: that's where a deleted Screener is made
+            // again, and sorting can't work until it is.
+            var sortingError: (any Error)?
+            do { try await route() } catch { sortingError = error }
+            try await syncMailboxes()
+            if let sortingError { throw sortingError }
             try await receiveBubbleUps(among: created)
             try? await syncBubbleUps()
             if !created.isEmpty, let newMailHandler {

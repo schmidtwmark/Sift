@@ -461,6 +461,36 @@ let boxes = SpecialMailboxes(inbox: "inbox", screener: "screener", screenedOut: 
         #expect(try await engine.store.messages(in: "receipts").count == 2)
     }
 
+    @Test func inboxCountLeavesOutMailOnItsWayToTheScreener() async throws {
+        let server = DemoServer()
+        let first = try makeEngine(server)
+        try await first.start(activatedAt: .now.addingTimeInterval(-DemoSeed.activationAge))
+        let store = await first.store
+        let screener = try #require(server.mailboxId(named: SyncEngine.screenerName))
+        func unread() async throws -> (inbox: Int?, screener: Int?) {
+            let boxes = try await store.mailboxes()
+            return (boxes.first { $0.role == "inbox" }?.unreadEmails, boxes.first { $0.id == screener }?.unreadEmails)
+        }
+        let before = try await unread()
+
+        // Mail arriving while Sift is open: a push, then a refresh.
+        _ = server.deliver(from: ("Stranger", "hi@stranger.example"), subject: "Hello", text: "Hi")
+        try await first.refresh()
+        var after = try await unread()
+        #expect(after.inbox == before.inbox)
+        #expect(after.screener == before.screener.map { $0 + 1 })
+
+        // Mail that arrived while Sift was closed, at the next launch.
+        _ = server.deliver(from: ("Another", "hi@another.example"), subject: "Hey", text: "Hey")
+        let client = JMAPClient(token: "demo", sessionURL: DemoServer.sessionURL, urlSession: server.urlSession())
+        let next = SyncEngine(client: client, store: store)
+        #expect(try await next.loadSaved())
+        try await next.start()
+        after = try await unread()
+        #expect(after.inbox == before.inbox)
+        #expect(after.screener == before.screener.map { $0 + 2 })
+    }
+
     @Test func screeningInFilesMailAndLaterArrivals() async throws {
         let server = DemoServer()
         let engine = try makeEngine(server)

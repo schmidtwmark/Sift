@@ -307,6 +307,13 @@ struct WebViewRepresentable: PlatformViewRepresentable {
               fixContrast();
               function fit() {
                 var body = document.body; if (!body) return;
+                // Many templates make html and body 100% tall. Here that's the view's
+                // own height, which starts tiny, so measuring would just echo it back
+                // and cut the message off. Let the content set the height instead.
+                [document.documentElement, body].forEach(function (el) {
+                  el.style.setProperty('height', 'auto', 'important');
+                  el.style.setProperty('min-height', '0', 'important');
+                });
                 body.style.zoom = 1;
                 var width = document.documentElement.scrollWidth, viewport = window.innerWidth;
                 if (width > viewport + 4) body.style.zoom = viewport / width;

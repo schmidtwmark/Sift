@@ -121,8 +121,11 @@ public enum DemoSeed {
         """
     }
 
+    /// Starts with the reset many shops' templates have, which makes the page
+    /// as tall as the window showing it.
     static func receiptHTML(order: String, item: String, price: String) -> String {
         """
+        <style>html, body { margin: 0 auto !important; padding: 0 !important; height: 100% !important; width: 100% !important; }</style>
         <table style="font-family: -apple-system, sans-serif; width: 100%; max-width: 520px; border-collapse: collapse;">
           <tr><td style="font-size: 20px; font-weight: 600; padding-bottom: 12px;">Order \(order)</td></tr>
           <tr><td style="padding: 8px 0; border-top: 1px solid #eee;">\(item)</td><td style="text-align: right;">\(price)</td></tr>

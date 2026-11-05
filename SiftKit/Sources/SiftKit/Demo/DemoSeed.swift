@@ -45,7 +45,8 @@ public enum DemoSeed {
                        mailbox: "newsletters", receivedAt: ago(5))
         server.deliver(from: ("Alex Rivera", "alex@rivera.example"), subject: "Photos from the crag",
                        text: "Dumped everything into the shared album. The one of you on the arete is great.",
-                       mailbox: "archive", receivedAt: ago(4), keywords: ["$seen"])
+                       mailbox: "archive", receivedAt: ago(4), keywords: ["$seen"],
+                       attachments: [("Arete.jpg", "image/jpeg", DemoPhoto.crag())])
 
         // An unsorted import from HEY: years of mail in one folder.
         let imported: [(name: String, email: String, subject: String, daysAgo: Double)] = [

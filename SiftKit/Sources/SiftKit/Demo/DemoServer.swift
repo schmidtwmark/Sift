@@ -140,10 +140,17 @@ public final class DemoServer: @unchecked Sendable {
     public func deliver(from: (name: String, email: String), subject: String, text: String, html: String? = nil,
                         mailbox: String = "inbox", receivedAt: Date = .now, keywords: [String] = [],
                         threadId: String? = nil, to: String = "you@fastmail.com",
-                        authenticationResults: [String]? = nil) -> String {
+                        authenticationResults: [String]? = nil,
+                        attachments: [(name: String, type: String, data: Data)] = []) -> String {
         locked {
             let id = "M\(nextId)"
             nextId += 1
+            let parts: [[String: Any]] = attachments.enumerated().map { index, file in
+                let blobId = "F\(id)x\(index)"
+                blobs[blobId] = file.data
+                return ["partId": "\(index + 3)", "blobId": blobId, "name": file.name, "type": file.type,
+                        "size": file.data.count, "disposition": "attachment"]
+            }
             emails[id] = [
                 "id": id, "blobId": "B\(id)", "threadId": threadId ?? "T\(id)",
                 "mailboxIds": [mailbox: true],
@@ -156,7 +163,7 @@ public final class DemoServer: @unchecked Sendable {
                 "cc": [Any](), "replyTo": [Any](),
                 "subject": subject,
                 "preview": String(text.prefix(180)),
-                "hasAttachment": false,
+                "hasAttachment": !parts.isEmpty, "attachments": parts,
                 "messageId": ["<\(id)@demo.sift>"], "inReplyTo": NSNull(), "references": NSNull(),
             ]
             if let authenticationResults { emails[id]?["header:Authentication-Results:asText:all"] = authenticationResults }

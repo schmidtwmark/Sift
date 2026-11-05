@@ -3,6 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
+#else
+import AppKit
 #endif
 
 /// One message being written: its fields, its attachments as they upload,
@@ -248,6 +250,31 @@ final class ComposeDraft {
             state = .failed(error.localizedDescription)
         }
         if let index = attachments.firstIndex(where: { $0.id == pending.id }) { attachments[index].state = state }
+    }
+
+    /// A picture pasted or dropped into the text, as a file to send.
+    static func file(from attachment: NSTextAttachment, number: Int) -> (data: Data, name: String, type: String)? {
+        let wrapper = attachment.fileWrapper?.isRegularFile == true ? attachment.fileWrapper : nil
+        var data = wrapper?.regularFileContents ?? attachment.contents
+        var type = (wrapper?.preferredFilename).flatMap { UTType(filenameExtension: ($0 as NSString).pathExtension) }
+            ?? attachment.fileType.flatMap { UTType($0) }
+        if data == nil, let image = attachment.image {
+            #if canImport(UIKit)
+            data = image.cgImage.flatMap(PastedImage.png)
+            #else
+            data = image.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(PastedImage.png)
+            #endif
+            type = .png
+        }
+        guard let data, !data.isEmpty else { return nil }
+        var file = (data: data, type: type ?? .data)
+        if file.type.conforms(to: .image) { file = PastedImage.mailable(file.data, type: file.type) }
+        // The system names every pasted picture something like "Attachment.png";
+        // a real file's name is worth keeping.
+        let given = (wrapper?.preferredFilename as NSString?)?.deletingPathExtension ?? ""
+        let generic = given.isEmpty || ["attachment", "image"].contains(given.lowercased()) || given.hasPrefix("Pasted Graphic")
+        let name = "\(generic ? "Image \(number)" : given).\(file.type.preferredFilenameExtension ?? "dat")"
+        return (file.data, name, file.type.preferredMIMEType ?? "application/octet-stream")
     }
 
     /// A file from the Files app, a file panel or a drop.

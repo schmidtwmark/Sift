@@ -135,8 +135,10 @@ struct ComposeView: View {
             }
             if !draft.attachments.isEmpty { attachmentStrip }
             TextEditor(text: $draft.body, selection: $selection)
-                // Links are all a message is sent with, so they're all a paste keeps.
+                // Links are all a message is sent with, so they're all a paste keeps,
+                // along with pictures, which become attachments.
                 .attributedTextFormattingDefinition(\.compose)
+                .onChange(of: draft.body) { attachPasted() }
                 .focused($focus, equals: .body)
                 .font(.body)
                 .scrollContentBackground(.hidden)
@@ -352,6 +354,28 @@ struct ComposeView: View {
                 .padding(.vertical, 8)
             }
             Divider().padding(.leading, rowInset)
+        }
+    }
+
+    /// A picture pasted or dropped into the message comes out of the text and
+    /// joins the attachments, like one from the photo library.
+    private func attachPasted() {
+        let placeholder: Character = "\u{FFFC}"
+        guard draft.body.characters.contains(placeholder) else { return }
+        #if os(iOS)
+        let pasted = draft.body.runs.compactMap { draft.body[$0.range].uiKit.attachment }
+        #else
+        let pasted = draft.body.runs.compactMap { draft.body[$0.range].appKit.attachment }
+        #endif
+        draft.body.transform(updating: &selection) { body in
+            while let start = body.characters.firstIndex(of: placeholder) {
+                body.removeSubrange(start..<body.characters.index(after: start))
+            }
+        }
+        let first = draft.attachments.count + 1
+        for (index, attachment) in pasted.enumerated() {
+            guard let file = ComposeDraft.file(from: attachment, number: first + index) else { continue }
+            Task { await draft.attach(file.data, name: file.name, type: file.type, model: model) }
         }
     }
 
@@ -608,6 +632,12 @@ extension AttributeScopes {
     /// What a message body keeps as you write it: links, which it's sent with.
     struct ComposeAttributes: AttributeScope {
         let link: AttributeScopes.FoundationAttributes.LinkAttribute
+        // Only so a pasted picture arrives whole: see attachPasted().
+        #if os(iOS)
+        let attachment: AttributeScopes.UIKitAttributes.AttachmentAttribute
+        #else
+        let attachment: AttributeScopes.AppKitAttributes.AttachmentAttribute
+        #endif
     }
 
     var compose: ComposeAttributes.Type { ComposeAttributes.self }

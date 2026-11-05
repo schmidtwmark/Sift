@@ -34,6 +34,45 @@ struct RichBodyTests {
         #expect(String(web.characters) == "Hello\nx there")
     }
 
+    func quote(_ text: String) -> AttributedString {
+        var quote = AttributedString(text)
+        quote[QuotedAttribute.self] = true
+        return quote
+    }
+
+    @Test func quotedLinesAreMarkedInPlainText() {
+        let text = AttributedString("Sounds good\n\n") + quote("On Tuesday, Alex wrote:\n\nSee you at 7.")
+        #expect(RichBody.plainText(text) == "Sounds good\n\n> On Tuesday, Alex wrote:\n>\n> See you at 7.")
+    }
+
+    @Test func aReplyBetweenTheLinesIsNotQuoted() throws {
+        let text = quote("First?\n") + AttributedString("Yes.\n") + quote("Second?")
+        #expect(RichBody.plainText(text) == "> First?\nYes.\n> Second?")
+        let html = try #require(RichBody.html(text))
+        #expect(html.components(separatedBy: "<blockquote").count == 3)
+        #expect(html.contains("</blockquote><div dir=\"auto\">Yes.</div><blockquote"))
+    }
+
+    @Test func quotesGoAsHTMLEvenWithoutLinks() throws {
+        let html = try #require(RichBody.html(AttributedString("Hi\n\n") + quote("Old & wise")))
+        #expect(html.contains("<div dir=\"auto\">Hi<br><br></div><blockquote type=\"cite\""))
+        #expect(html.contains(">Old &amp; wise</div></blockquote>"))
+    }
+
+    @Test func draftsComeBackWithTheirQuotes() throws {
+        let original = AttributedString("Hi\n\n") + quote("On Tuesday, Alex wrote:\n\nFirst?\n") + AttributedString("Yes.\n") + quote("Second?")
+        let restored = RichBody.attributedString(html: try #require(RichBody.html(original)))
+        #expect(String(restored.characters) == String(original.characters))
+        #expect(RichBody.plainText(restored) == RichBody.plainText(original))
+    }
+
+    @Test func blankLinesAboveAQuoteSurviveADraft() throws {
+        let original = AttributedString("\n\n") + quote("Old")
+        let restored = RichBody.attributedString(html: try #require(RichBody.html(original)))
+        #expect(String(restored.characters) == "\n\nOld")
+        #expect(RichBody.plainText(restored) == "\n\n> Old")
+    }
+
     @Test func typedAddressesBecomeLinks() {
         #expect(RichBody.url(from: "example.com/a") == URL(string: "https://example.com/a"))
         #expect(RichBody.url(from: " http://x.example ") == URL(string: "http://x.example"))

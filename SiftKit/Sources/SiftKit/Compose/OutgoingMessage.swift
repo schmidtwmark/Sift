@@ -24,8 +24,8 @@ public struct OutgoingMessage: Codable, Sendable, Hashable {
     public var bcc: [EmailAddress]
     public var subject: String
     public var body: String
-    /// The body with its links, when it has any (see `RichBody`); `body` is
-    /// its plain-text version.
+    /// The body with its links and quotes, when it has any (see `RichBody`);
+    /// `body` is its plain-text version.
     public var html: String?
     public var attachments: [Attachment]
     /// Threading headers, so replies stay in their conversation.

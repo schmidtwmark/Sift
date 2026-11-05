@@ -42,7 +42,10 @@ struct ComposeView: View {
         .task {
             guard !prepared else { return }
             prepared = true
-            focus = await draft.prepare(request, model: model)
+            let field = await draft.prepare(request, model: model)
+            // Writing starts at the top, above any signature and quote, like Mail.
+            selection = AttributedTextSelection(insertionPoint: draft.body.startIndex)
+            focus = field
         }
         // Saves a draft after a pause in editing, like Mail.
         .task(id: draft.message.content) {
@@ -135,9 +138,7 @@ struct ComposeView: View {
             }
             if !draft.attachments.isEmpty { attachmentStrip }
             TextEditor(text: $draft.body, selection: $selection)
-                // Links are all a message is sent with, so they're all a paste keeps,
-                // along with pictures, which become attachments.
-                .attributedTextFormattingDefinition(\.compose)
+                .attributedTextFormattingDefinition(ComposeFormatting())
                 .onChange(of: draft.body) { attachPasted() }
                 .focused($focus, equals: .body)
                 .font(.body)
@@ -629,16 +630,35 @@ extension Color {
 }
 
 extension AttributeScopes {
-    /// What a message body keeps as you write it: links, which it's sent with.
+    /// What a message body can hold as you write it. Links and quotes are what
+    /// it's sent with, so they're all a paste keeps, along with pictures, which
+    /// become attachments (see attachPasted()). The rest is how quotes look.
     struct ComposeAttributes: AttributeScope {
         let link: AttributeScopes.FoundationAttributes.LinkAttribute
-        // Only so a pasted picture arrives whole: see attachPasted().
+        let quoted: QuotedAttribute
+        let foregroundColor: AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute
         #if os(iOS)
         let attachment: AttributeScopes.UIKitAttributes.AttachmentAttribute
         #else
         let attachment: AttributeScopes.AppKitAttributes.AttachmentAttribute
         #endif
     }
+}
 
-    var compose: ComposeAttributes.Type { ComposeAttributes.self }
+/// Quoted text is in the app's color, so it's clear what's new.
+struct ComposeFormatting: AttributedTextFormattingDefinition {
+    typealias Scope = AttributeScopes.ComposeAttributes
+
+    var body: some AttributedTextFormattingDefinition<Scope> {
+        QuoteColor()
+    }
+}
+
+private struct QuoteColor: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.ComposeAttributes
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute
+
+    func constrain(_ container: inout Attributes) {
+        container.foregroundColor = container.quoted == true ? Color("AccentColor") : nil
+    }
 }

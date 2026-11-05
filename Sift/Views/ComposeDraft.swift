@@ -124,19 +124,17 @@ final class ComposeDraft {
                 references = original.references + [id]
             }
             answering = original.id
-            let quoted = await Self.quotedText(of: original, model: model)
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map { "> \($0)" }.joined(separator: "\n")
-            body = AttributedString(signatureBlock(model) + "\n\nOn \(original.receivedAt.formatted(date: .abbreviated, time: .shortened)), \(original.senderDisplayName) wrote:\n\n\(quoted)")
+            let text = await Self.quotedText(of: original, model: model)
+            let date = original.receivedAt.formatted(date: .abbreviated, time: .shortened)
+            body = AttributedString(signatureBlock(model) + "\n\n")
+                + Self.quote("On \(date), \(original.senderDisplayName) wrote:\n\n\(text)")
             showsAllHeaders = !cc.isEmpty
             focus = .body
         } else if let original = request.forward {
             kind = "Forward"
             subject = original.subject.lowercased().hasPrefix("fwd:") ? original.subject : "Fwd: \(original.subject)"
             let text = await Self.quotedText(of: original, model: model)
-            body = AttributedString(signatureBlock(model) + """
-
-
+            body = AttributedString(signatureBlock(model) + "\n\n") + Self.quote("""
                 Begin forwarded message:
 
                 From: \(Self.format(original.sender))
@@ -167,6 +165,13 @@ final class ComposeDraft {
         guard let signature = model.identities.first(where: { $0.id == identityId })?.textSignature?
             .trimmingCharacters(in: .whitespacesAndNewlines), !signature.isEmpty else { return "" }
         return "\n\n-- \n\(signature)"
+    }
+
+    /// Text from another message, set apart from what's being written.
+    private static func quote(_ text: String) -> AttributedString {
+        var quote = AttributedString(text.replacing("\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+        quote[QuotedAttribute.self] = true
+        return quote
     }
 
     private static func quotedText(of message: MessageRecord, model: AppModel) async -> String {

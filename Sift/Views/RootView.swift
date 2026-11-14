@@ -79,7 +79,7 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $sidebar, showSettings: $showSettings)
+            SidebarView(selection: sidebarSelection, showSettings: $showSettings)
                 // Here on the column itself: set inside the sidebar, it was ignored.
                 #if os(macOS)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 400)
@@ -127,10 +127,7 @@ struct MainView: View {
             open(id)
         }
         .focusedSceneValue(\.windowCommands, WindowCommands(
-            show: { item in
-                searchText = ""
-                sidebar = item
-            },
+            show: { sidebarSelection.wrappedValue = $0 },
             focusSearch: { searchFocused = true },
             compose: { compose($0) },
             isEditingText: searchFocused
@@ -139,6 +136,30 @@ struct MainView: View {
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView() }
         }
+        #endif
+    }
+
+    /// Search results come from every mailbox, so while there are some, none is
+    /// shown as selected. Picking one ends the search and shows it, even the one
+    /// you searched from. (On iPhone the list is pushed from the home screen, so
+    /// its mailbox stays selected; clearing it would go back.)
+    private var sidebarSelection: Binding<SidebarItem?> {
+        Binding {
+            searchText.isEmpty || isStacked ? sidebar : nil
+        } set: { item in
+            if item != nil {
+                searchText = ""
+                searchFocused = false
+            }
+            sidebar = item
+        }
+    }
+
+    private var isStacked: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
         #endif
     }
 

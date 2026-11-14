@@ -56,6 +56,9 @@ struct SiftCommands: Commands {
             Button("Senders", systemImage: "person.2") { window?.show(.senders) }
                 .keyboardShortcut("4")
                 .disabled(window == nil)
+            Button("All Unread", systemImage: "envelope.stack") { window?.showAllUnread() }
+                .keyboardShortcut("5")
+                .disabled(window == nil)
             #if os(macOS)
             Divider()
             Button("Suggest Screening Rules…", systemImage: "wand.and.stars") { openWindow(id: "suggestions") }

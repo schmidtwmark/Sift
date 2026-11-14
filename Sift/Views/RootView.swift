@@ -76,10 +76,12 @@ struct MainView: View {
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var showSettings = false
+    /// All Unread: pushed from the home screen on iPhone, in the reader elsewhere.
+    @State private var readingUnread = false
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: sidebarSelection, showSettings: $showSettings)
+            SidebarView(selection: sidebarSelection, showSettings: $showSettings, readingUnread: $readingUnread)
                 // Here on the column itself: set inside the sidebar, it was ignored.
                 #if os(macOS)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 400)
@@ -121,6 +123,18 @@ struct MainView: View {
             selectedSender = nil
         }
         .onChange(of: searchText) { selectedThreads = [] }
+        // All Unread and a conversation or sender share the reader.
+        .onChange(of: readingUnread) { _, reading in
+            guard reading, !isStacked else { return }
+            selectedThreads = []
+            selectedSender = nil
+        }
+        .onChange(of: selectedThreads) { _, threads in
+            if !threads.isEmpty, !isStacked { readingUnread = false }
+        }
+        .onChange(of: selectedSender) { _, sender in
+            if sender != nil, !isStacked { readingUnread = false }
+        }
         .onChange(of: model.threadToOpen, initial: true) {
             guard let id = model.threadToOpen else { return }
             model.threadToOpen = nil
@@ -128,6 +142,7 @@ struct MainView: View {
         }
         .focusedSceneValue(\.windowCommands, WindowCommands(
             show: { sidebarSelection.wrappedValue = $0 },
+            showAllUnread: { readingUnread = true },
             focusSearch: { searchFocused = true },
             compose: { compose($0) },
             isEditingText: searchFocused
@@ -217,7 +232,13 @@ struct MainView: View {
     private var sourceMailbox: String? { searchText.isEmpty ? listMailbox : nil }
 
     @ViewBuilder private var detail: some View {
-        if selectedThreads.count == 1, let id = selectedThreads.first {
+        if readingUnread, !isStacked {
+            #if os(macOS)
+            AllUnreadView()  // conversations open in their own windows
+            #else
+            NavigationStack { AllUnreadView() }
+            #endif
+        } else if selectedThreads.count == 1, let id = selectedThreads.first {
             ThreadView(threadId: id, sourceMailbox: sourceMailbox, onClose: closeThread)
                 .id(id)
         } else if selectedThreads.count > 1 {

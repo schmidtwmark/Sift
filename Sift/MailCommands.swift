@@ -100,6 +100,7 @@ struct MailSelection {
 /// Window-level commands: navigation, search and compose.
 struct WindowCommands {
     var show: (SidebarItem) -> Void
+    var showAllUnread: () -> Void
     var focusSearch: () -> Void
     var compose: (ComposeRequest) -> Void
     /// True while typing in the search field, so ⌘⌫ edits text instead of trashing mail.

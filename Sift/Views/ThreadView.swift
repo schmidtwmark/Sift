@@ -404,8 +404,8 @@ private struct SpamBanner: View {
     }
 }
 
-/// Which labels the conversation is in.
-private struct LabelRow: View {
+/// Which labels the conversation (or message) is in.
+struct LabelRow: View {
     @Environment(AppModel.self) private var model
     let message: MessageRecord
 

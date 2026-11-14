@@ -10,6 +10,8 @@ struct SidebarView: View {
     @Environment(\.undoManager) private var undoManager
     @Binding var selection: SidebarItem?
     @Binding var showSettings: Bool
+    /// Shows All Unread in the reader (iPad and Mac; iPhone pushes it here).
+    @Binding var readingUnread: Bool
     @State private var screenerCount = 0
     @State private var searchText = ""
     /// Wiggle mode, as on the Home Screen: drag labels to rearrange them, tap
@@ -62,6 +64,9 @@ struct SidebarView: View {
         .modifier(HomeSearch(enabled: searchesHere, text: $searchText))
         .navigationDestination(for: ThreadRoute.self) { route in
             PushedThreadView(threadId: route.id)
+        }
+        .navigationDestination(for: AllUnreadRoute.self) { _ in
+            AllUnreadView()
         }
     }
 
@@ -127,6 +132,9 @@ struct SidebarView: View {
                 #else
                 ToolbarItem(placement: .primaryAction) { screenerButton }
                 #endif
+            }
+            ToolbarItem(placement: .primaryAction) {
+                AllUnreadButton(action: searchesHere ? nil : { readingUnread = true })
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("New Message", systemImage: "square.and.pencil") { compose() }
@@ -639,7 +647,7 @@ private struct FolderDrop: ViewModifier {
 }
 
 /// A thread opened from home-screen search; Archive pops back to the results.
-private struct PushedThreadView: View {
+struct PushedThreadView: View {
     @Environment(\.dismiss) private var dismiss
     let threadId: String
 

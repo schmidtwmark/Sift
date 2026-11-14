@@ -329,8 +329,8 @@ public final class MailStore: Sendable {
                 FROM picked p
             )
             SELECT m.*,
-                (SELECT count(*) FROM message t WHERE t.threadId = m.threadId AND t.keywords NOT LIKE :bubble) AS messageCount,
-                (SELECT count(*) FROM message t WHERE t.threadId = m.threadId AND t.isUnread AND t.keywords NOT LIKE :bubble) AS unreadCount,
+                (SELECT count(DISTINCT coalesce(t.messageIdHeader, t.id)) FROM message t WHERE t.threadId = m.threadId AND t.keywords NOT LIKE :bubble) AS messageCount,
+                (SELECT count(DISTINCT coalesce(t.messageIdHeader, t.id)) FROM message t WHERE t.threadId = m.threadId AND t.isUnread AND t.keywords NOT LIKE :bubble) AS unreadCount,
                 (SELECT group_concat(DISTINCT coalesce(nullif(t.fromName, ''), t.fromEmail))
                     FROM message t WHERE t.threadId = m.threadId AND t.keywords NOT LIKE :bubble) AS participants,
                 (SELECT max(t.receivedAt) FROM message t WHERE t.threadId = m.threadId AND t.keywords LIKE :bubble) AS bubbledAt

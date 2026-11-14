@@ -105,7 +105,8 @@ struct SearchResultsView: View {
     private var results: [MessageRecord] {
         var seen = Set<String>()
         // Bubble Up notes repeat the subject; the conversation itself is the result.
-        let merged = (server + local).filter { !$0.isBubble && seen.insert($0.id).inserted }
+        // Mail to yourself is there twice (Sent and Inbox); it's one result.
+        let merged = (server + local).filter { !$0.isBubble && seen.insert($0.messageIdHeader ?? $0.id).inserted }
         return merged.sorted { $0.receivedAt > $1.receivedAt }
     }
 }

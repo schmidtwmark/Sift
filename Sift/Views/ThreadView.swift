@@ -46,15 +46,20 @@ struct ThreadView: View {
                         Text(messages.count == 1 ? "1 Message" : "\(messages.count) Messages")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
+                            .fixedSize()
                         BubbleUpBadge(threadId: threadId, bubbledAt: bubbledAt)
                         Spacer()
+                        // Offered the rest of the row first, so names show when they fit.
                         LabelRow(message: latest)
+                            .layoutPriority(1)
                     }
                     .padding(.horizontal, 20)
                 }
-                ForEach(messages) { message in
+                ForEach(conversation, id: \.[0].id) { copies in
+                    let message = MessageRecord.merging(copies)
                     MessageCard(
                         message: message,
+                        copies: copies,
                         isExpanded: expanded.contains(message.id),
                         showsSubject: message.id == messages.first?.id,
                         onToggle: { toggle(message.id) },
@@ -96,20 +101,29 @@ struct ThreadView: View {
                 onClose()
                 return
             }
-            guard let new, let last = new.last else { return }
+            let groups = Self.conversation(new ?? [])
+            guard let last = groups.last else { return }
             if let old {
-                // Open messages that arrive while you're reading the thread.
+                // Open messages that arrive while you're reading the thread
+                // (not a second copy of one you have, such as mail to yourself).
                 let known = Set(old.map(\.id))
-                expanded.formUnion(new.map(\.id).filter { !known.contains($0) })
+                expanded.formUnion(groups.filter { !$0.contains { known.contains($0.id) } }.map(\.[0].id))
             } else {
                 // Open the newest message plus anything unread.
-                expanded = Set(new.filter(\.isUnread).map(\.id)).union([last.id])
+                expanded = Set(groups.filter { $0.contains(where: \.isUnread) }.map(\.[0].id)).union([last[0].id])
             }
         }
     }
 
-    /// The conversation, without Bubble Up notes (they only move it to the top).
-    private var messages: [MessageRecord] { (live.value ?? []).filter { !$0.isBubble } }
+    /// The conversation, each message with its copies (see `groupingCopies`).
+    private var conversation: [[MessageRecord]] { Self.conversation(live.value ?? []) }
+
+    /// Each message once, without Bubble Up notes (they only move it to the top).
+    private var messages: [MessageRecord] { conversation.map(MessageRecord.merging) }
+
+    private static func conversation(_ records: [MessageRecord]) -> [[MessageRecord]] {
+        records.filter { !$0.isBubble }.groupingCopies()
+    }
 
     /// The newest message in Spam, if any.
     private var spam: MessageRecord? {
@@ -265,7 +279,7 @@ struct ThreadView: View {
     }
 
     private func togglePin() {
-        if let latest = messages.last { Task { await model.toggleFlag(latest) } }
+        if let latest = conversation.last { Task { await model.toggleFlag(latest) } }
     }
 
     /// A sheet on iPhone; its own small window on the Mac.
@@ -398,16 +412,31 @@ private struct LabelRow: View {
     var body: some View {
         let ids = message.mailboxIds.filter { model.mailbox($0) != nil }
         if !ids.isEmpty {
-            HStack(spacing: 6) {
-                ForEach(ids, id: \.self) { id in
-                    Label(model.name(of: id), systemImage: model.icon(for: id))
-                        .labelStyle(.chip)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.14), in: Capsule())
+            // Names when they fit on one line, else just their icons.
+            ViewThatFits(in: .horizontal) {
+                chips(ids, named: true)
+                chips(ids, named: false)
+            }
+        }
+    }
+
+    private func chips(_ ids: [String], named: Bool) -> some View {
+        HStack(spacing: 6) {
+            ForEach(ids, id: \.self) { id in
+                Group {
+                    if named {
+                        Label(model.name(of: id), systemImage: model.icon(for: id)).labelStyle(.chip)
+                    } else {
+                        Label(model.name(of: id), systemImage: model.icon(for: id)).labelStyle(.iconOnly)
+                    }
                 }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.secondary.opacity(0.14), in: Capsule())
             }
         }
     }
@@ -419,6 +448,8 @@ struct MessageCard: View {
     @Environment(AppModel.self) private var model
     @AppStorage("loadRemoteImages") private var loadRemoteImages = true
     let message: MessageRecord
+    /// Every copy `message` stands for (mail to yourself has two); opening it reads them all.
+    var copies: [MessageRecord] = []
     var isExpanded: Bool
     var showsSubject = true
     var onToggle: () -> Void = {}
@@ -465,8 +496,8 @@ struct MessageCard: View {
                 // Read as soon as it's on screen. A separate task, so leaving the
                 // view or a navigation transition can't cancel the request.
                 if message.isUnread {
-                    let shown = message
-                    Task { await model.markRead([shown]) }
+                    let shown = copies.isEmpty ? [message] : copies
+                    Task { await model.markRead(shown) }
                 }
             } catch is CancellationError {
             } catch {

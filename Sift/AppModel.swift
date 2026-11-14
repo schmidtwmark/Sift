@@ -455,9 +455,11 @@ final class AppModel {
         await markThreads([threadId], read: read)
     }
 
-    func toggleFlag(_ message: MessageRecord) async {
-        guard let engine else { return }
-        await perform { try await engine.setKeyword(Keyword.flagged, !message.isFlagged, for: [message.id]) }
+    /// Flags a message, or unflags it, in all its copies (mail to yourself has two).
+    func toggleFlag(_ copies: [MessageRecord]) async {
+        guard let engine, !copies.isEmpty else { return }
+        let flag = !copies.contains(where: \.isFlagged)
+        await perform { try await engine.setKeyword(Keyword.flagged, flag, for: copies.map(\.id)) }
     }
 
     func setPinned(_ threadIds: [String], _ pinned: Bool) async {

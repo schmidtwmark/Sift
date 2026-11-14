@@ -107,16 +107,10 @@ final class ComposeDraft {
             focus = to.isEmpty ? .to : .body
         } else if let original = request.replyTo {
             kind = request.replyAll ? "Reply All" : "Reply"
-            to = original.replyTo.isEmpty ? [original.sender] : original.replyTo
-            if request.replyAll {
-                let already = Set(to.map(\.normalized))
-                cc = (original.to + original.cc).filter { !own.contains($0.normalized) && !already.contains($0.normalized) }
-            }
+            (to, cc) = ReplyRecipients.of(original, all: request.replyAll, own: own)
             subject = original.subject.lowercased().hasPrefix("re:") ? original.subject : "Re: \(original.subject)"
-            // Reply from whichever of your addresses it was sent to.
-            if let identity = model.identities.first(where: { identity in
-                (original.to + original.cc).contains { $0.normalized == identity.email.lowercased() }
-            }) {
+            if let email = ReplyRecipients.identityEmail(for: original, own: own),
+               let identity = model.identities.first(where: { $0.email.lowercased() == email }) {
                 identityId = identity.id
             }
             if let id = original.messageIdHeader {
@@ -306,7 +300,7 @@ final class ComposeDraft {
     /// Returns true when a draft was written.
     @discardableResult
     func save(model: AppModel) async -> Bool {
-        guard savedContent != nil, !isFinished, !isSaving else { return false }
+        guard savedContent != nil, !isFinished, !isSaving, !isSending else { return false }
         let snapshot = message
         if snapshot.isBlank {
             if let id = draftId {
@@ -336,6 +330,9 @@ final class ComposeDraft {
         for field in [Field.to, .cc, .bcc] { commit(field) }
         isSending = true
         defer { isSending = false }
+        // A draft still being saved lands first, so sending replaces it
+        // rather than leaving it behind in the conversation.
+        while isSaving { try? await Task.sleep(for: .milliseconds(50)) }
         let ok = await model.send(message)
         if ok { isFinished = true }
         return ok
